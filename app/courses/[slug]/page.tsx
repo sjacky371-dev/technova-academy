@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import RazorpayCheckoutButton from '../../components/RazorpayCheckoutButton'
-
+import CoursePreviewVideo from '../../components/CoursePreviewVideo'
 const siteUrl = 'https://technova-academy-ten.vercel.app'
 
 type CoursePageProps = {
@@ -920,6 +920,11 @@ export default async function CoursePage({
             </div>
           </div>
         </section>
+        <CoursePreviewVideo
+          title={`Preview: ${course.title}`}
+          description="Watch a free preview to get a feel for the topics, teaching style and technical learning covered in this program."
+          youtubeUrl="https://www.youtube.com/watch?v=VyWAvY2CF9c"
+        />
 
         {/* =====================================
             CURRICULUM
