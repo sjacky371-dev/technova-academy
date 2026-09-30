@@ -1,8 +1,9 @@
+import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import RazorpayCheckoutButton from '../../components/RazorpayCheckoutButton'
 
-export const dynamic = 'force-dynamic'
+const siteUrl = 'https://technova-academy-ten.vercel.app'
 
 type CoursePageProps = {
   params: Promise<{
@@ -10,26 +11,73 @@ type CoursePageProps = {
   }>
 }
 
-type Lesson = {
-  id: string
-  title: string
-  description: string | null
-  sort_order: number
-  duration_minutes: number | null
-  is_preview: boolean
-}
+export async function generateMetadata({
+  params,
+}: CoursePageProps): Promise<Metadata> {
+  const { slug } = await params
+  const supabase = createAdminClient()
 
-type CourseModule = {
-  id: string
-  title: string
-  description: string | null
-  sort_order: number
-  lessons: Lesson[]
-}
+  const { data: course } = await supabase
+    .from('courses')
+    .select(`
+      title,
+      slug,
+      description,
+      short_description,
+      price_inr,
+      duration_months,
+      level,
+      category:categories(name)
+    `)
+    .eq('slug', slug)
+    .eq('published', true)
+    .maybeSingle()
 
-type ProgressRow = {
-  lesson_id: string
-  completed: boolean
+  if (!course) {
+    return {
+      title: 'Course Not Found',
+      description: 'The requested TechNova Academy course could not be found.',
+    }
+  }
+
+  const category = Array.isArray(course.category)
+    ? course.category[0]
+    : course.category
+
+  const title = `${course.title} Course`
+  const description =
+    course.short_description ||
+    course.description ||
+    `Learn ${course.title} through a structured ${course.duration_months}-month professional program at TechNova Academy.`
+
+  return {
+    title,
+    description,
+    keywords: [
+      course.title,
+      `${course.title} course`,
+      category?.name || 'technology course',
+      'TechNova Academy',
+      'online professional course',
+      '12 month course',
+    ],
+    alternates: {
+      canonical: `${siteUrl}/courses/${course.slug}`,
+    },
+    openGraph: {
+      type: 'website',
+      url: `${siteUrl}/courses/${course.slug}`,
+      siteName: 'TechNova Academy',
+      title: `${course.title} | TechNova Academy`,
+      description,
+      locale: 'en_IN',
+    },
+    twitter: {
+      card: 'summary',
+      title: `${course.title} | TechNova Academy`,
+      description,
+    },
+  }
 }
 
 export default async function CoursePage({
@@ -37,22 +85,13 @@ export default async function CoursePage({
 }: CoursePageProps) {
   const { slug } = await params
 
-  /*
-   * IMPORTANT:
-   * adminSupabase is used only for PUBLIC course/catalog data.
-   * supabase is still used for the logged-in user's account data.
-   */
   const supabase = await createClient()
-  const adminSupabase = createAdminClient()
 
-  // --------------------------------------------------
-  // LOAD PUBLISHED COURSE
-  // --------------------------------------------------
+  // -----------------------------------------
+  // LOAD COURSE
+  // -----------------------------------------
 
-  const {
-    data: course,
-    error: courseError,
-  } = await adminSupabase
+  const { data: course, error: courseError } = await supabase
     .from('courses')
     .select(`
       id,
@@ -79,7 +118,6 @@ export default async function CoursePage({
           background: '#f5f7fb',
           padding: '80px 24px',
           fontFamily: 'Arial, Helvetica, sans-serif',
-          color: '#111827',
         }}
       >
         <div
@@ -89,27 +127,10 @@ export default async function CoursePage({
             background: '#fff',
             border: '1px solid #e5e7eb',
             borderRadius: '18px',
-            padding: '45px',
+            padding: '40px',
             textAlign: 'center',
           }}
         >
-          <div
-            style={{
-              width: '60px',
-              height: '60px',
-              margin: '0 auto 20px',
-              borderRadius: '16px',
-              background: '#eef3ff',
-              color: '#315ee7',
-              display: 'grid',
-              placeItems: 'center',
-              fontSize: '25px',
-              fontWeight: 900,
-            }}
-          >
-            ?
-          </div>
-
           <h1
             style={{
               margin: '0 0 12px',
@@ -122,15 +143,14 @@ export default async function CoursePage({
           <p
             style={{
               color: '#667085',
-              margin: '0 0 25px',
-              lineHeight: 1.7,
+              marginBottom: '25px',
             }}
           >
-            This course does not exist or is not currently published.
+            The course you are looking for could not be found.
           </p>
 
           <a
-            href="/courses"
+            href="/"
             style={{
               display: 'inline-flex',
               padding: '12px 18px',
@@ -141,21 +161,18 @@ export default async function CoursePage({
               fontWeight: 800,
             }}
           >
-            Browse Courses
+            Back to Courses
           </a>
         </div>
       </main>
     )
   }
 
-  // --------------------------------------------------
+  // -----------------------------------------
   // LOAD MODULES + LESSONS
-  // PUBLIC DATA = ADMIN CLIENT
-  // --------------------------------------------------
+  // -----------------------------------------
 
-  const {
-    data: modulesData,
-  } = await adminSupabase
+  const { data: modules } = await supabase
     .from('course_modules')
     .select(`
       id,
@@ -172,44 +189,24 @@ export default async function CoursePage({
       )
     `)
     .eq('course_id', course.id)
-    .order('sort_order', {
-      ascending: true,
-    })
+    .order('sort_order', { ascending: true })
 
-  const modules: CourseModule[] = (modulesData || []).map(
-    (module) => ({
-      ...module,
-      lessons: Array.isArray(module.lessons)
-        ? [...module.lessons].sort(
-            (a, b) => a.sort_order - b.sort_order
-          )
-        : [],
-    })
-  )
-
-  // --------------------------------------------------
+  // -----------------------------------------
   // CURRENT USER
-  // NORMAL CLIENT = AUTHENTICATED USER DATA
-  // --------------------------------------------------
+  // -----------------------------------------
 
   const {
     data: { user },
   } = await supabase.auth.getUser()
 
-  let enrollment: {
-    id: string
-    status: string
-    enrolled_at: string
-    completed_at: string | null
-    expires_at: string | null
-  } | null = null
-
-  let progressRows: ProgressRow[] = []
+  let enrollment = null
+  let progressRows: Array<{
+    lesson_id: string
+    completed: boolean
+  }> = []
 
   if (user) {
-    const {
-      data: enrollmentData,
-    } = await supabase
+    const { data: enrollmentData } = await supabase
       .from('enrollments')
       .select(`
         id,
@@ -226,9 +223,7 @@ export default async function CoursePage({
     enrollment = enrollmentData
 
     if (enrollment) {
-      const {
-        data: progressData,
-      } = await supabase
+      const { data: progressData } = await supabase
         .from('lesson_progress')
         .select(`
           lesson_id,
@@ -241,12 +236,16 @@ export default async function CoursePage({
     }
   }
 
-  // --------------------------------------------------
+  // -----------------------------------------
   // COURSE STATS
-  // --------------------------------------------------
+  // -----------------------------------------
 
-  const allLessons = modules.flatMap(
-    (module) => module.lessons
+  const moduleList = modules || []
+
+  const allLessons = moduleList.flatMap((module) =>
+    Array.isArray(module.lessons)
+      ? module.lessons
+      : []
   )
 
   const totalLessons = allLessons.length
@@ -272,17 +271,15 @@ export default async function CoursePage({
   )
 
   const continueLesson =
-    firstIncompleteLesson ||
-    allLessons[0] ||
-    null
+    firstIncompleteLesson || allLessons[0] || null
 
   const category = Array.isArray(course.category)
     ? course.category[0]
     : course.category
 
-  // --------------------------------------------------
+  // -----------------------------------------
   // RENDER
-  // --------------------------------------------------
+  // -----------------------------------------
 
   return (
     <main
@@ -290,18 +287,19 @@ export default async function CoursePage({
         minHeight: '100vh',
         background: '#f5f7fb',
         color: '#111827',
-        fontFamily:
-          'Arial, Helvetica, sans-serif',
+        fontFamily: 'Arial, Helvetica, sans-serif',
       }}
     >
-      {/* NAVIGATION */}
+      {/* =====================================
+          NAVIGATION
+      ====================================== */}
 
       <header
         style={{
           position: 'sticky',
           top: 0,
           zIndex: 100,
-          background: 'rgba(255,255,255,.97)',
+          background: 'rgba(255,255,255,.96)',
           backdropFilter: 'blur(12px)',
           borderBottom: '1px solid #e5e7eb',
         }}
@@ -358,7 +356,7 @@ export default async function CoursePage({
             }}
           >
             <a
-              href="/courses"
+              href="/"
               style={{
                 padding: '10px 14px',
                 borderRadius: '9px',
@@ -406,7 +404,9 @@ export default async function CoursePage({
         </div>
       </header>
 
-      {/* HERO */}
+      {/* =====================================
+          HERO
+      ====================================== */}
 
       <section
         style={{
@@ -421,8 +421,7 @@ export default async function CoursePage({
             margin: '0 auto',
             padding: '65px 24px 75px',
             display: 'grid',
-            gridTemplateColumns:
-              'minmax(0,1.25fr) minmax(300px,.75fr)',
+            gridTemplateColumns: '1.25fr .75fr',
             gap: '55px',
             alignItems: 'center',
           }}
@@ -437,21 +436,18 @@ export default async function CoursePage({
               }}
             >
               <span style={heroBadge}>
-                {category?.name ||
-                  'Technology'}
+                {category?.name || 'Technology'}
               </span>
 
               <span style={heroBadge}>
-                {course.level ||
-                  'Professional'}
+                {course.level || 'Professional'}
               </span>
             </div>
 
             <h1
               style={{
                 margin: '0 0 20px',
-                fontSize:
-                  'clamp(38px,5vw,60px)',
+                fontSize: 'clamp(38px,5vw,60px)',
                 lineHeight: 1.06,
                 letterSpacing: '-2.5px',
               }}
@@ -481,37 +477,51 @@ export default async function CoursePage({
                 color: '#dbe5f5',
               }}
             >
-              <HeroStat
-                value={String(
-                  course.duration_months
-                )}
-                label="Months"
-              />
+              <div>
+                <strong style={heroStat}>
+                  {course.duration_months}
+                </strong>
 
-              <HeroStat
-                value={String(
-                  totalLessons
-                )}
-                label="Lessons"
-              />
+                <span style={heroStatLabel}>
+                  Months
+                </span>
+              </div>
 
-              <HeroStat
-                value={String(
-                  modules.length
-                )}
-                label="Modules"
-              />
+              <div>
+                <strong style={heroStat}>
+                  {totalLessons}
+                </strong>
+
+                <span style={heroStatLabel}>
+                  Lessons
+                </span>
+              </div>
+
+              <div>
+                <strong style={heroStat}>
+                  {moduleList.length}
+                </strong>
+
+                <span style={heroStatLabel}>
+                  Modules
+                </span>
+              </div>
 
               {course.certificate_enabled && (
-                <HeroStat
-                  value="✓"
-                  label="Certificate"
-                />
+                <div>
+                  <strong style={heroStat}>
+                    ✓
+                  </strong>
+
+                  <span style={heroStatLabel}>
+                    Certificate
+                  </span>
+                </div>
               )}
             </div>
           </div>
 
-          {/* PRICE CARD */}
+          {/* HERO PRICE CARD */}
 
           <div
             style={{
@@ -590,8 +600,7 @@ export default async function CoursePage({
                 <div
                   style={{
                     display: 'flex',
-                    justifyContent:
-                      'space-between',
+                    justifyContent: 'space-between',
                     color: '#667085',
                     fontSize: '11px',
                     marginBottom: '22px',
@@ -609,14 +618,40 @@ export default async function CoursePage({
                 {continueLesson ? (
                   <a
                     href={`/courses/${course.slug}/learn/${continueLesson.id}`}
-                    style={primaryButton}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '100%',
+                      padding: '14px',
+                      borderRadius: '10px',
+                      background: '#315ee7',
+                      color: '#fff',
+                      textDecoration: 'none',
+                      fontWeight: 800,
+                      fontSize: '14px',
+                      boxSizing: 'border-box',
+                    }}
                   >
                     Continue Learning →
                   </a>
                 ) : (
                   <a
                     href="/dashboard"
-                    style={primaryButton}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '100%',
+                      padding: '14px',
+                      borderRadius: '10px',
+                      background: '#315ee7',
+                      color: '#fff',
+                      textDecoration: 'none',
+                      fontWeight: 800,
+                      fontSize: '14px',
+                      boxSizing: 'border-box',
+                    }}
                   >
                     Go to Dashboard
                   </a>
@@ -630,8 +665,7 @@ export default async function CoursePage({
                     color: '#667085',
                     fontSize: '11px',
                     fontWeight: 800,
-                    textTransform:
-                      'uppercase',
+                    textTransform: 'uppercase',
                     letterSpacing: '1px',
                     marginBottom: '8px',
                   }}
@@ -667,20 +701,27 @@ export default async function CoursePage({
 
                 {user ? (
                   <RazorpayCheckoutButton
-                    courseSlug={
-                      course.slug
-                    }
-                    courseTitle={
-                      course.title
-                    }
-                    priceInr={Number(
-                      course.price_inr
-                    )}
+                    courseSlug={course.slug}
+                    courseTitle={course.title}
+                    priceInr={Number(course.price_inr)}
                   />
                 ) : (
                   <a
                     href="/auth"
-                    style={primaryButton}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '100%',
+                      padding: '14px',
+                      borderRadius: '10px',
+                      background: '#315ee7',
+                      color: '#fff',
+                      textDecoration: 'none',
+                      fontWeight: 800,
+                      fontSize: '14px',
+                      boxSizing: 'border-box',
+                    }}
                   >
                     Sign In to Purchase
                   </a>
@@ -692,29 +733,20 @@ export default async function CoursePage({
                     gap: '10px',
                     marginTop: '20px',
                     paddingTop: '18px',
-                    borderTop:
-                      '1px solid #e5e7eb',
+                    borderTop: '1px solid #e5e7eb',
                   }}
                 >
-                  <SmallBenefit
-                    text={`${course.duration_months}-month program`}
-                  />
+                  <SmallBenefit text={`${course.duration_months}-month program`} />
 
                   {course.lifetime_access && (
-                    <SmallBenefit
-                      text="Lifetime course access"
-                    />
+                    <SmallBenefit text="Lifetime course access" />
                   )}
 
                   {course.certificate_enabled && (
-                    <SmallBenefit
-                      text="Certificate included"
-                    />
+                    <SmallBenefit text="Certificate included" />
                   )}
 
-                  <SmallBenefit
-                    text="Structured curriculum"
-                  />
+                  <SmallBenefit text="Structured curriculum" />
                 </div>
               </>
             )}
@@ -722,7 +754,9 @@ export default async function CoursePage({
         </div>
       </section>
 
-      {/* OVERVIEW */}
+      {/* =====================================
+          COURSE OVERVIEW
+      ====================================== */}
 
       <section
         style={{
@@ -735,8 +769,7 @@ export default async function CoursePage({
             maxWidth: '1200px',
             margin: '0 auto',
             display: 'grid',
-            gridTemplateColumns:
-              'minmax(0,1.35fr) minmax(280px,.65fr)',
+            gridTemplateColumns: '1.35fr .65fr',
             gap: '45px',
           }}
         >
@@ -746,8 +779,7 @@ export default async function CoursePage({
             </span>
 
             <h2 style={sectionTitle}>
-              Build skills through a
-              structured learning journey.
+              Build skills through a structured learning journey.
             </h2>
 
             <p
@@ -767,8 +799,7 @@ export default async function CoursePage({
           <div
             style={{
               padding: '24px',
-              border:
-                '1px solid #e5e7eb',
+              border: '1px solid #e5e7eb',
               borderRadius: '17px',
               background: '#f8fafc',
             }}
@@ -790,7 +821,7 @@ export default async function CoursePage({
             >
               <BenefitRow
                 title="Structured curriculum"
-                text={`${modules.length} modules`}
+                text={`${moduleList.length} modules`}
               />
 
               <BenefitRow
@@ -825,7 +856,9 @@ export default async function CoursePage({
         </div>
       </section>
 
-      {/* CURRICULUM */}
+      {/* =====================================
+          CURRICULUM
+      ====================================== */}
 
       <section
         style={{
@@ -849,8 +882,7 @@ export default async function CoursePage({
             </span>
 
             <h2 style={sectionTitle}>
-              Everything included in
-              the program.
+              Everything included in the program.
             </h2>
 
             <p
@@ -860,8 +892,7 @@ export default async function CoursePage({
                 fontSize: '14px',
               }}
             >
-              {modules.length} modules ·{' '}
-              {totalLessons} lessons
+              {moduleList.length} modules · {totalLessons} lessons
             </p>
           </div>
 
@@ -871,380 +902,324 @@ export default async function CoursePage({
               gap: '13px',
             }}
           >
-            {modules.map(
-              (module, moduleIndex) => {
-                const lessons =
-                  module.lessons
+            {moduleList.map((module, moduleIndex) => {
+              const lessons = Array.isArray(module.lessons)
+                ? [...module.lessons].sort(
+                    (a, b) =>
+                      a.sort_order - b.sort_order
+                  )
+                : []
 
-                const moduleCompleted =
-                  lessons.filter(
-                    (lesson) =>
-                      progressRows.some(
-                        (progress) =>
-                          progress.lesson_id ===
-                            lesson.id &&
-                          progress.completed
-                      )
-                  ).length
+              const moduleCompleted = lessons.filter(
+                (lesson) =>
+                  progressRows.some(
+                    (progress) =>
+                      progress.lesson_id === lesson.id &&
+                      progress.completed
+                  )
+              ).length
 
-                return (
-                  <details
-                    key={module.id}
+              return (
+                <details
+                  key={module.id}
+                  style={{
+                    background: '#fff',
+                    border: '1px solid #e2e6ee',
+                    borderRadius: '15px',
+                    overflow: 'hidden',
+                  }}
+                  open={moduleIndex === 0}
+                >
+                  <summary
                     style={{
-                      background: '#fff',
-                      border:
-                        '1px solid #e2e6ee',
-                      borderRadius: '15px',
-                      overflow: 'hidden',
+                      cursor: 'pointer',
+                      listStyle: 'none',
+                      padding: '20px 22px',
                     }}
-                    open={
-                      moduleIndex === 0
-                    }
                   >
-                    <summary
+                    <div
                       style={{
-                        cursor: 'pointer',
-                        listStyle: 'none',
-                        padding:
-                          '20px 22px',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '15px',
                       }}
                     >
                       <div
                         style={{
                           display: 'flex',
-                          justifyContent:
-                            'space-between',
-                          alignItems:
-                            'center',
+                          alignItems: 'center',
                           gap: '15px',
                         }}
                       >
-                        <div
-                          style={{
-                            display: 'flex',
-                            alignItems:
-                              'center',
-                            gap: '15px',
-                          }}
-                        >
-                          <span
-                            style={{
-                              width: '38px',
-                              height: '38px',
-                              flexShrink: 0,
-                              display: 'grid',
-                              placeItems:
-                                'center',
-                              borderRadius:
-                                '10px',
-                              background:
-                                '#eef3ff',
-                              color:
-                                '#315ee7',
-                              fontSize:
-                                '12px',
-                              fontWeight:
-                                900,
-                            }}
-                          >
-                            {String(
-                              moduleIndex +
-                                1
-                            ).padStart(
-                              2,
-                              '0'
-                            )}
-                          </span>
-
-                          <div>
-                            <h3
-                              style={{
-                                margin:
-                                  '0 0 4px',
-                                fontSize:
-                                  '15px',
-                              }}
-                            >
-                              {
-                                module.title
-                              }
-                            </h3>
-
-                            <span
-                              style={{
-                                color:
-                                  '#98a2b3',
-                                fontSize:
-                                  '11px',
-                              }}
-                            >
-                              {
-                                lessons.length
-                              }{' '}
-                              lessons
-                              {enrollment &&
-                                ` · ${moduleCompleted}/${lessons.length} completed`}
-                            </span>
-                          </div>
-                        </div>
-
                         <span
                           style={{
-                            color:
-                              '#667085',
-                            fontSize:
-                              '20px',
+                            width: '38px',
+                            height: '38px',
+                            flexShrink: 0,
+                            display: 'grid',
+                            placeItems: 'center',
+                            borderRadius: '10px',
+                            background: '#eef3ff',
+                            color: '#315ee7',
+                            fontSize: '12px',
+                            fontWeight: 900,
                           }}
                         >
-                          +
+                          {String(
+                            moduleIndex + 1
+                          ).padStart(2, '0')}
                         </span>
+
+                        <div>
+                          <h3
+                            style={{
+                              margin: '0 0 4px',
+                              fontSize: '15px',
+                            }}
+                          >
+                            {module.title}
+                          </h3>
+
+                          <span
+                            style={{
+                              color: '#98a2b3',
+                              fontSize: '11px',
+                            }}
+                          >
+                            {lessons.length} lessons
+                            {enrollment &&
+                              ` · ${moduleCompleted}/${lessons.length} completed`}
+                          </span>
+                        </div>
                       </div>
 
-                      {module.description && (
-                        <p
-                          style={{
-                            margin:
-                              '14px 0 0 53px',
-                            color:
-                              '#667085',
-                            fontSize:
-                              '12px',
-                            lineHeight:
-                              1.6,
-                          }}
-                        >
-                          {
-                            module.description
-                          }
-                        </p>
-                      )}
-                    </summary>
+                      <span
+                        style={{
+                          color: '#667085',
+                          fontSize: '20px',
+                        }}
+                      >
+                        +
+                      </span>
+                    </div>
 
-                    <div
-                      style={{
-                        borderTop:
-                          '1px solid #edf0f4',
-                      }}
-                    >
-                      {lessons.map(
-                        (
-                          lesson,
-                          lessonIndex
-                        ) => {
-                          const completed =
-                            progressRows.some(
-                              (
-                                progress
-                              ) =>
-                                progress.lesson_id ===
-                                  lesson.id &&
-                                progress.completed
-                            )
+                    {module.description && (
+                      <p
+                        style={{
+                          margin:
+                            '14px 0 0 53px',
+                          color: '#667085',
+                          fontSize: '12px',
+                          lineHeight: 1.6,
+                        }}
+                      >
+                        {module.description}
+                      </p>
+                    )}
+                  </summary>
 
-                          const canOpen =
-                            Boolean(
-                              enrollment ||
-                                lesson.is_preview
-                            )
+                  <div
+                    style={{
+                      borderTop:
+                        '1px solid #edf0f4',
+                    }}
+                  >
+                    {lessons.map(
+                      (lesson, lessonIndex) => {
+                        const completed =
+                          progressRows.some(
+                            (progress) =>
+                              progress.lesson_id ===
+                                lesson.id &&
+                              progress.completed
+                          )
 
-                          return (
+                        const canOpen =
+                          Boolean(
+                            enrollment ||
+                              lesson.is_preview
+                          )
+
+                        return (
+                          <div
+                            key={lesson.id}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent:
+                                'space-between',
+                              gap: '15px',
+                              padding:
+                                '14px 22px 14px 75px',
+                              borderBottom:
+                                lessonIndex ===
+                                lessons.length - 1
+                                  ? 'none'
+                                  : '1px solid #f0f2f5',
+                            }}
+                          >
                             <div
-                              key={
-                                lesson.id
-                              }
                               style={{
-                                display:
-                                  'flex',
+                                display: 'flex',
                                 alignItems:
                                   'center',
-                                justifyContent:
-                                  'space-between',
-                                gap: '15px',
-                                padding:
-                                  '14px 22px 14px 75px',
-                                borderBottom:
-                                  lessonIndex ===
-                                  lessons.length -
-                                    1
-                                    ? 'none'
-                                    : '1px solid #f0f2f5',
+                                gap: '12px',
+                                minWidth: 0,
                               }}
                             >
-                              <div
+                              <span
                                 style={{
-                                  display:
-                                    'flex',
-                                  alignItems:
+                                  width: '25px',
+                                  height: '25px',
+                                  flexShrink: 0,
+                                  display: 'grid',
+                                  placeItems:
                                     'center',
-                                  gap: '12px',
-                                  minWidth:
-                                    0,
+                                  borderRadius: '50%',
+                                  background:
+                                    completed
+                                      ? '#e9f9f2'
+                                      : '#f2f4f7',
+                                  color:
+                                    completed
+                                      ? '#087443'
+                                      : '#667085',
+                                  fontSize: '10px',
+                                  fontWeight: 800,
                                 }}
                               >
-                                <span
-                                  style={{
-                                    width:
-                                      '25px',
-                                    height:
-                                      '25px',
-                                    flexShrink:
-                                      0,
-                                    display:
-                                      'grid',
-                                    placeItems:
-                                      'center',
-                                    borderRadius:
-                                      '50%',
-                                    background:
-                                      completed
-                                        ? '#e9f9f2'
-                                        : '#f2f4f7',
-                                    color:
-                                      completed
-                                        ? '#087443'
-                                        : '#667085',
-                                    fontSize:
-                                      '10px',
-                                    fontWeight:
-                                      800,
-                                  }}
-                                >
-                                  {completed
-                                    ? '✓'
-                                    : lessonIndex +
-                                      1}
-                                </span>
+                                {completed
+                                  ? '✓'
+                                  : lessonIndex + 1}
+                              </span>
 
+                              <div
+                                style={{
+                                  minWidth: 0,
+                                }}
+                              >
                                 <div
                                   style={{
-                                    minWidth:
-                                      0,
+                                    display:
+                                      'flex',
+                                    alignItems:
+                                      'center',
+                                    gap: '7px',
+                                    flexWrap:
+                                      'wrap',
                                   }}
                                 >
-                                  <div
+                                  <span
                                     style={{
-                                      display:
-                                        'flex',
-                                      alignItems:
-                                        'center',
-                                      gap: '7px',
-                                      flexWrap:
-                                        'wrap',
+                                      fontSize:
+                                        '13px',
+                                      fontWeight:
+                                        700,
+                                      color:
+                                        '#344054',
                                     }}
                                   >
+                                    {lesson.title}
+                                  </span>
+
+                                  {lesson.is_preview && (
                                     <span
                                       style={{
+                                        padding:
+                                          '3px 6px',
+                                        borderRadius:
+                                          '5px',
+                                        background:
+                                          '#eef3ff',
+                                        color:
+                                          '#315ee7',
                                         fontSize:
-                                          '13px',
+                                          '9px',
                                         fontWeight:
-                                          700,
-                                        color:
-                                          '#344054',
+                                          900,
                                       }}
                                     >
-                                      {
-                                        lesson.title
-                                      }
-                                    </span>
-
-                                    {lesson.is_preview && (
-                                      <span
-                                        style={{
-                                          padding:
-                                            '3px 6px',
-                                          borderRadius:
-                                            '5px',
-                                          background:
-                                            '#eef3ff',
-                                          color:
-                                            '#315ee7',
-                                          fontSize:
-                                            '9px',
-                                          fontWeight:
-                                            900,
-                                        }}
-                                      >
-                                        PREVIEW
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  {lesson.duration_minutes && (
-                                    <span
-                                      style={{
-                                        display:
-                                          'block',
-                                        marginTop:
-                                          '3px',
-                                        color:
-                                          '#98a2b3',
-                                        fontSize:
-                                          '10px',
-                                      }}
-                                    >
-                                      {
-                                        lesson.duration_minutes
-                                      }{' '}
-                                      minutes
+                                      PREVIEW
                                     </span>
                                   )}
                                 </div>
-                              </div>
 
-                              {canOpen ? (
-                                <a
-                                  href={`/courses/${course.slug}/learn/${lesson.id}`}
-                                  style={{
-                                    flexShrink:
-                                      0,
-                                    padding:
-                                      '8px 11px',
-                                    border:
-                                      '1px solid #d9dee8',
-                                    borderRadius:
-                                      '8px',
-                                    color:
-                                      '#344054',
-                                    textDecoration:
-                                      'none',
-                                    fontSize:
-                                      '11px',
-                                    fontWeight:
-                                      800,
-                                  }}
-                                >
-                                  {completed
-                                    ? 'Review'
-                                    : 'Open'}
-                                </a>
-                              ) : (
-                                <span
-                                  style={{
-                                    flexShrink:
-                                      0,
-                                    color:
-                                      '#98a2b3',
-                                    fontSize:
-                                      '18px',
-                                  }}
-                                >
-                                  🔒
-                                </span>
-                              )}
+                                {lesson.duration_minutes && (
+                                  <span
+                                    style={{
+                                      display:
+                                        'block',
+                                      marginTop:
+                                        '3px',
+                                      color:
+                                        '#98a2b3',
+                                      fontSize:
+                                        '10px',
+                                    }}
+                                  >
+                                    {
+                                      lesson.duration_minutes
+                                    }{' '}
+                                    minutes
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                          )
-                        }
-                      )}
-                    </div>
-                  </details>
-                )
-              }
-            )}
+
+                            {canOpen ? (
+                              <a
+                                href={`/courses/${course.slug}/learn/${lesson.id}`}
+                                style={{
+                                  flexShrink: 0,
+                                  padding:
+                                    '8px 11px',
+                                  borderRadius:
+                                    '8px',
+                                  border:
+                                    '1px solid #d9dee8',
+                                  color:
+                                    '#344054',
+                                  textDecoration:
+                                    'none',
+                                  fontSize:
+                                    '11px',
+                                  fontWeight:
+                                    800,
+                                }}
+                              >
+                                {completed
+                                  ? 'Review'
+                                  : 'Open'}
+                              </a>
+                            ) : (
+                              <span
+                                style={{
+                                  flexShrink: 0,
+                                  color:
+                                    '#98a2b3',
+                                  fontSize:
+                                    '18px',
+                                }}
+                              >
+                                🔒
+                              </span>
+                            )}
+                          </div>
+                        )
+                      }
+                    )}
+                  </div>
+                </details>
+              )
+            })}
           </div>
         </div>
       </section>
 
-      {/* FINAL CTA */}
+      {/* =====================================
+          FINAL CTA
+      ====================================== */}
 
       <section
         style={{
@@ -1268,6 +1243,7 @@ export default async function CoursePage({
             style={{
               margin: '0 0 10px',
               fontSize: '32px',
+              letterSpacing: '-1px',
             }}
           >
             Ready to begin?
@@ -1282,13 +1258,11 @@ export default async function CoursePage({
               lineHeight: 1.7,
             }}
           >
-            Start your structured
-            learning journey with
-            TechNova Academy.
+            Start your structured learning journey with TechNova
+            Academy.
           </p>
 
-          {enrollment &&
-          continueLesson ? (
+          {enrollment && continueLesson ? (
             <a
               href={`/courses/${course.slug}/learn/${continueLesson.id}`}
               style={ctaButton}
@@ -1299,9 +1273,7 @@ export default async function CoursePage({
             <RazorpayCheckoutButton
               courseSlug={course.slug}
               courseTitle={course.title}
-              priceInr={Number(
-                course.price_inr
-              )}
+              priceInr={Number(course.price_inr)}
             />
           ) : (
             <a
@@ -1314,7 +1286,9 @@ export default async function CoursePage({
         </div>
       </section>
 
-      {/* FOOTER */}
+      {/* =====================================
+          FOOTER
+      ====================================== */}
 
       <footer
         style={{
@@ -1328,8 +1302,7 @@ export default async function CoursePage({
             maxWidth: '1200px',
             margin: '0 auto',
             display: 'flex',
-            justifyContent:
-              'space-between',
+            justifyContent: 'space-between',
             gap: '25px',
             flexWrap: 'wrap',
           }}
@@ -1350,8 +1323,7 @@ export default async function CoursePage({
                 fontSize: '12px',
               }}
             >
-              Professional technology
-              education.
+              Professional technology education.
             </p>
           </div>
 
@@ -1360,11 +1332,10 @@ export default async function CoursePage({
               display: 'flex',
               gap: '20px',
               alignItems: 'center',
-              flexWrap: 'wrap',
             }}
           >
             <a
-              href="/courses"
+              href="/"
               style={footerLink}
             >
               Courses
@@ -1391,43 +1362,21 @@ export default async function CoursePage({
             maxWidth: '1200px',
             margin: '30px auto 0',
             paddingTop: '20px',
-            borderTop:
-              '1px solid #1e293b',
+            borderTop: '1px solid #1e293b',
             color: '#64748b',
             fontSize: '11px',
           }}
         >
-          © 2026 TechNova Academy.
-          All rights reserved.
+          © 2026 TechNova Academy. All rights reserved.
         </div>
       </footer>
     </main>
   )
 }
 
-// --------------------------------------------------
-// SMALL COMPONENTS
-// --------------------------------------------------
-
-function HeroStat({
-  value,
-  label,
-}: {
-  value: string
-  label: string
-}) {
-  return (
-    <div>
-      <strong style={heroStat}>
-        {value}
-      </strong>
-
-      <span style={heroStatLabel}>
-        {label}
-      </span>
-    </div>
-  )
-}
+/* =========================================
+   SMALL COMPONENTS
+========================================= */
 
 function SmallBenefit({
   text,
@@ -1478,12 +1427,10 @@ function BenefitRow({
       style={{
         display: 'flex',
         alignItems: 'center',
-        justifyContent:
-          'space-between',
+        justifyContent: 'space-between',
         gap: '15px',
         paddingBottom: '12px',
-        borderBottom:
-          '1px solid #e5e7eb',
+        borderBottom: '1px solid #e5e7eb',
       }}
     >
       <span
@@ -1508,17 +1455,15 @@ function BenefitRow({
   )
 }
 
-// --------------------------------------------------
-// STYLES
-// --------------------------------------------------
+/* =========================================
+   STYLES
+========================================= */
 
 const heroBadge = {
   padding: '7px 10px',
   borderRadius: '7px',
-  background:
-    'rgba(255,255,255,.10)',
-  border:
-    '1px solid rgba(255,255,255,.15)',
+  background: 'rgba(255,255,255,.10)',
+  border: '1px solid rgba(255,255,255,.15)',
   color: '#dbe5f5',
   fontSize: '10px',
   fontWeight: 900,
@@ -1551,21 +1496,6 @@ const sectionTitle = {
   fontSize: 'clamp(30px,4vw,43px)',
   lineHeight: 1.12,
   letterSpacing: '-1.5px',
-}
-
-const primaryButton = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  width: '100%',
-  padding: '14px',
-  borderRadius: '10px',
-  background: '#315ee7',
-  color: '#fff',
-  textDecoration: 'none',
-  fontWeight: 800,
-  fontSize: '14px',
-  boxSizing: 'border-box' as const,
 }
 
 const ctaButton = {
