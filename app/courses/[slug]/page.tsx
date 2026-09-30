@@ -1,33 +1,70 @@
-import Link from 'next/link'
-import { notFound } from 'next/navigation'
-import { createClient } from '../../../lib/supabase/server'
+import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import RazorpayCheckoutButton from '../../components/RazorpayCheckoutButton'
+
+export const dynamic = 'force-dynamic'
+
+type CoursePageProps = {
+  params: Promise<{
+    slug: string
+  }>
+}
+
+type Lesson = {
+  id: string
+  title: string
+  description: string | null
+  sort_order: number
+  duration_minutes: number | null
+  is_preview: boolean
+}
+
+type CourseModule = {
+  id: string
+  title: string
+  description: string | null
+  sort_order: number
+  lessons: Lesson[]
+}
+
+type ProgressRow = {
+  lesson_id: string
+  completed: boolean
+}
 
 export default async function CoursePage({
   params,
-}: {
-  params: Promise<{ slug: string }>
-}) {
+}: CoursePageProps) {
   const { slug } = await params
+
+  /*
+   * IMPORTANT:
+   * adminSupabase is used only for PUBLIC course/catalog data.
+   * supabase is still used for the logged-in user's account data.
+   */
   const supabase = await createClient()
+  const adminSupabase = createAdminClient()
+
+  // --------------------------------------------------
+  // LOAD PUBLISHED COURSE
+  // --------------------------------------------------
 
   const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  const { data: course, error: courseError } = await supabase
+    data: course,
+    error: courseError,
+  } = await adminSupabase
     .from('courses')
     .select(`
       id,
       title,
       slug,
+      description,
       short_description,
       price_inr,
       duration_months,
       lifetime_access,
       certificate_enabled,
       level,
-      published,
       category:categories(name)
     `)
     .eq('slug', slug)
@@ -35,781 +72,1517 @@ export default async function CoursePage({
     .single()
 
   if (courseError || !course) {
-    notFound()
+    return (
+      <main
+        style={{
+          minHeight: '100vh',
+          background: '#f5f7fb',
+          padding: '80px 24px',
+          fontFamily: 'Arial, Helvetica, sans-serif',
+          color: '#111827',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: '800px',
+            margin: '0 auto',
+            background: '#fff',
+            border: '1px solid #e5e7eb',
+            borderRadius: '18px',
+            padding: '45px',
+            textAlign: 'center',
+          }}
+        >
+          <div
+            style={{
+              width: '60px',
+              height: '60px',
+              margin: '0 auto 20px',
+              borderRadius: '16px',
+              background: '#eef3ff',
+              color: '#315ee7',
+              display: 'grid',
+              placeItems: 'center',
+              fontSize: '25px',
+              fontWeight: 900,
+            }}
+          >
+            ?
+          </div>
+
+          <h1
+            style={{
+              margin: '0 0 12px',
+              fontSize: '32px',
+            }}
+          >
+            Course Not Found
+          </h1>
+
+          <p
+            style={{
+              color: '#667085',
+              margin: '0 0 25px',
+              lineHeight: 1.7,
+            }}
+          >
+            This course does not exist or is not currently published.
+          </p>
+
+          <a
+            href="/courses"
+            style={{
+              display: 'inline-flex',
+              padding: '12px 18px',
+              borderRadius: '9px',
+              background: '#315ee7',
+              color: '#fff',
+              textDecoration: 'none',
+              fontWeight: 800,
+            }}
+          >
+            Browse Courses
+          </a>
+        </div>
+      </main>
+    )
   }
 
-  const category = Array.isArray(course.category)
-    ? course.category[0]
-    : course.category
+  // --------------------------------------------------
+  // LOAD MODULES + LESSONS
+  // PUBLIC DATA = ADMIN CLIENT
+  // --------------------------------------------------
 
-  const { data: modules, error: modulesError } = await supabase
+  const {
+    data: modulesData,
+  } = await adminSupabase
     .from('course_modules')
     .select(`
       id,
-      course_id,
       title,
       description,
-      sort_order
-    `)
-    .eq('course_id', course.id)
-    .order('sort_order', { ascending: true })
-
-  const moduleIds = (modules || []).map((module) => module.id)
-
-  let lessons: {
-    id: string
-    module_id: string
-    title: string
-    description: string | null
-    sort_order: number
-    video_url: string | null
-    duration_minutes: number | null
-    is_preview: boolean
-  }[] = []
-
-  if (moduleIds.length > 0) {
-    const { data: lessonRows } = await supabase
-      .from('lessons')
-      .select(`
+      sort_order,
+      lessons (
         id,
-        module_id,
         title,
         description,
         sort_order,
-        video_url,
         duration_minutes,
         is_preview
-      `)
-      .in('module_id', moduleIds)
-      .order('sort_order', { ascending: true })
+      )
+    `)
+    .eq('course_id', course.id)
+    .order('sort_order', {
+      ascending: true,
+    })
 
-    lessons = lessonRows || []
-  }
+  const modules: CourseModule[] = (modulesData || []).map(
+    (module) => ({
+      ...module,
+      lessons: Array.isArray(module.lessons)
+        ? [...module.lessons].sort(
+            (a, b) => a.sort_order - b.sort_order
+          )
+        : [],
+    })
+  )
 
-  let enrolled = false
-  let enrollmentStatus = ''
-  let completedLessonIds = new Set<string>()
+  // --------------------------------------------------
+  // CURRENT USER
+  // NORMAL CLIENT = AUTHENTICATED USER DATA
+  // --------------------------------------------------
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  let enrollment: {
+    id: string
+    status: string
+    enrolled_at: string
+    completed_at: string | null
+    expires_at: string | null
+  } | null = null
+
+  let progressRows: ProgressRow[] = []
 
   if (user) {
-    const { data: enrollment } = await supabase
+    const {
+      data: enrollmentData,
+    } = await supabase
       .from('enrollments')
-      .select('id, status')
+      .select(`
+        id,
+        status,
+        enrolled_at,
+        completed_at,
+        expires_at
+      `)
       .eq('user_id', user.id)
       .eq('course_id', course.id)
       .in('status', ['active', 'completed'])
       .maybeSingle()
 
+    enrollment = enrollmentData
+
     if (enrollment) {
-      enrolled = true
-      enrollmentStatus = enrollment.status
+      const {
+        data: progressData,
+      } = await supabase
+        .from('lesson_progress')
+        .select(`
+          lesson_id,
+          completed
+        `)
+        .eq('user_id', user.id)
+        .eq('enrollment_id', enrollment.id)
 
-      if (lessons.length > 0) {
-        const { data: progressRows } = await supabase
-          .from('lesson_progress')
-          .select('lesson_id, completed')
-          .eq('user_id', user.id)
-          .eq('completed', true)
-          .in(
-            'lesson_id',
-            lessons.map((lesson) => lesson.id)
-          )
-
-        completedLessonIds = new Set(
-          (progressRows || []).map((row) => row.lesson_id)
-        )
-      }
+      progressRows = progressData || []
     }
   }
 
-  const totalLessons = lessons.length
-  const completedLessons = completedLessonIds.size
+  // --------------------------------------------------
+  // COURSE STATS
+  // --------------------------------------------------
 
-  const progressPercent =
+  const allLessons = modules.flatMap(
+    (module) => module.lessons
+  )
+
+  const totalLessons = allLessons.length
+
+  const completedLessons = progressRows.filter(
+    (item) => item.completed
+  ).length
+
+  const progressPercentage =
     totalLessons > 0
-      ? Math.round((completedLessons / totalLessons) * 100)
+      ? Math.round(
+          (completedLessons / totalLessons) * 100
+        )
       : 0
 
-  const lessonsByModule = new Map<
-    string,
-    typeof lessons
-  >()
+  const firstIncompleteLesson = allLessons.find(
+    (lesson) =>
+      !progressRows.some(
+        (progress) =>
+          progress.lesson_id === lesson.id &&
+          progress.completed
+      )
+  )
 
-  for (const lesson of lessons) {
-    const existing = lessonsByModule.get(lesson.module_id) || []
-    existing.push(lesson)
-    lessonsByModule.set(lesson.module_id, existing)
-  }
+  const continueLesson =
+    firstIncompleteLesson ||
+    allLessons[0] ||
+    null
+
+  const category = Array.isArray(course.category)
+    ? course.category[0]
+    : course.category
+
+  // --------------------------------------------------
+  // RENDER
+  // --------------------------------------------------
 
   return (
     <main
       style={{
         minHeight: '100vh',
-        background: '#f7f9fc',
-        color: '#101827',
-        fontFamily: 'Arial, Helvetica, sans-serif',
+        background: '#f5f7fb',
+        color: '#111827',
+        fontFamily:
+          'Arial, Helvetica, sans-serif',
       }}
     >
-      <div
+      {/* NAVIGATION */}
+
+      <header
         style={{
-          maxWidth: '1200px',
-          margin: '0 auto',
-          padding: '30px 20px 70px',
+          position: 'sticky',
+          top: 0,
+          zIndex: 100,
+          background: 'rgba(255,255,255,.97)',
+          backdropFilter: 'blur(12px)',
+          borderBottom: '1px solid #e5e7eb',
         }}
       >
-        <div style={{ marginBottom: '25px' }}>
-          <Link
-            href="/"
-            style={{
-              color: '#315ee7',
-              textDecoration: 'none',
-              fontWeight: '700',
-              fontSize: '14px',
-            }}
-          >
-            ← Back to Courses
-          </Link>
-        </div>
-
-        <section
-          style={{
-            background: 'linear-gradient(135deg, #13264f, #315ee7)',
-            color: '#ffffff',
-            borderRadius: '20px',
-            padding: '40px',
-            marginBottom: '25px',
-          }}
-        >
-          <p
-            style={{
-              margin: '0 0 10px',
-              fontSize: '13px',
-              fontWeight: '800',
-              letterSpacing: '0.08em',
-              textTransform: 'uppercase',
-              opacity: 0.8,
-            }}
-          >
-            {category?.name || 'Technology'}
-          </p>
-
-          <h1
-            style={{
-              margin: '0 0 15px',
-              fontSize: 'clamp(32px, 5vw, 52px)',
-              lineHeight: '1.1',
-            }}
-          >
-            {course.title}
-          </h1>
-
-          <p
-            style={{
-              maxWidth: '800px',
-              margin: 0,
-              fontSize: '17px',
-              lineHeight: '1.7',
-              color: '#dbe5ff',
-            }}
-          >
-            {course.short_description ||
-              'A structured professional technology program with guided lessons, projects and practical learning.'}
-          </p>
-        </section>
-
         <div
           style={{
+            maxWidth: '1200px',
+            minHeight: '72px',
+            margin: '0 auto',
+            padding: '0 24px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '20px',
+          }}
+        >
+          <a
+            href="/"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '11px',
+              color: '#111827',
+              textDecoration: 'none',
+              fontWeight: 800,
+              fontSize: '18px',
+            }}
+          >
+            <span
+              style={{
+                width: '39px',
+                height: '39px',
+                display: 'grid',
+                placeItems: 'center',
+                borderRadius: '11px',
+                background:
+                  'linear-gradient(135deg,#315ee7,#0f9d83)',
+                color: '#fff',
+                fontSize: '12px',
+                fontWeight: 900,
+              }}
+            >
+              TN
+            </span>
+
+            TechNova Academy
+          </a>
+
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+            }}
+          >
+            <a
+              href="/courses"
+              style={{
+                padding: '10px 14px',
+                borderRadius: '9px',
+                color: '#667085',
+                textDecoration: 'none',
+                fontSize: '13px',
+                fontWeight: 700,
+              }}
+            >
+              All Courses
+            </a>
+
+            {user ? (
+              <a
+                href="/dashboard"
+                style={{
+                  padding: '10px 15px',
+                  borderRadius: '9px',
+                  background: '#315ee7',
+                  color: '#fff',
+                  textDecoration: 'none',
+                  fontSize: '13px',
+                  fontWeight: 800,
+                }}
+              >
+                Dashboard
+              </a>
+            ) : (
+              <a
+                href="/auth"
+                style={{
+                  padding: '10px 15px',
+                  borderRadius: '9px',
+                  background: '#315ee7',
+                  color: '#fff',
+                  textDecoration: 'none',
+                  fontSize: '13px',
+                  fontWeight: 800,
+                }}
+              >
+                Login
+              </a>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* HERO */}
+
+      <section
+        style={{
+          background:
+            'linear-gradient(135deg,#091633 0%,#17346f 55%,#2854a4 100%)',
+          color: '#fff',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: '1200px',
+            margin: '0 auto',
+            padding: '65px 24px 75px',
             display: 'grid',
             gridTemplateColumns:
-              'minmax(0, 1fr) minmax(280px, 360px)',
-            gap: '25px',
-            alignItems: 'start',
+              'minmax(0,1.25fr) minmax(300px,.75fr)',
+            gap: '55px',
+            alignItems: 'center',
           }}
         >
           <div>
-            <section
+            <div
               style={{
-                background: '#ffffff',
-                border: '1px solid #dfe6ee',
-                borderRadius: '16px',
-                padding: '25px',
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '8px',
                 marginBottom: '20px',
               }}
             >
-              <h2
-                style={{
-                  margin: '0 0 15px',
-                  fontSize: '24px',
-                }}
-              >
-                Course Overview
-              </h2>
+              <span style={heroBadge}>
+                {category?.name ||
+                  'Technology'}
+              </span>
 
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns:
-                    'repeat(auto-fit, minmax(150px, 1fr))',
-                  gap: '12px',
-                }}
-              >
-                <div
-                  style={{
-                    padding: '15px',
-                    background: '#f1f4f8',
-                    borderRadius: '10px',
-                  }}
-                >
-                  <strong>Duration</strong>
-                  <p
-                    style={{
-                      margin: '5px 0 0',
-                      color: '#5f6b7a',
-                    }}
-                  >
-                    {course.duration_months} months
-                  </p>
-                </div>
+              <span style={heroBadge}>
+                {course.level ||
+                  'Professional'}
+              </span>
+            </div>
 
-                <div
-                  style={{
-                    padding: '15px',
-                    background: '#f1f4f8',
-                    borderRadius: '10px',
-                  }}
-                >
-                  <strong>Level</strong>
-                  <p
-                    style={{
-                      margin: '5px 0 0',
-                      color: '#5f6b7a',
-                    }}
-                  >
-                    {course.level || 'Not specified'}
-                  </p>
-                </div>
-
-                <div
-                  style={{
-                    padding: '15px',
-                    background: '#f1f4f8',
-                    borderRadius: '10px',
-                  }}
-                >
-                  <strong>Access</strong>
-                  <p
-                    style={{
-                      margin: '5px 0 0',
-                      color: '#5f6b7a',
-                    }}
-                  >
-                    {course.lifetime_access
-                      ? 'Lifetime'
-                      : 'Limited'}
-                  </p>
-                </div>
-
-                <div
-                  style={{
-                    padding: '15px',
-                    background: '#f1f4f8',
-                    borderRadius: '10px',
-                  }}
-                >
-                  <strong>Certificate</strong>
-                  <p
-                    style={{
-                      margin: '5px 0 0',
-                      color: '#5f6b7a',
-                    }}
-                  >
-                    {course.certificate_enabled
-                      ? 'Included'
-                      : 'Not included'}
-                  </p>
-                </div>
-              </div>
-            </section>
-
-            {user && enrolled && (
-              <section
-                style={{
-                  background: '#ffffff',
-                  border: '1px solid #dfe6ee',
-                  borderRadius: '16px',
-                  padding: '25px',
-                  marginBottom: '20px',
-                }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    gap: '15px',
-                    alignItems: 'center',
-                    marginBottom: '12px',
-                  }}
-                >
-                  <div>
-                    <h2
-                      style={{
-                        margin: 0,
-                        fontSize: '22px',
-                      }}
-                    >
-                      Your Progress
-                    </h2>
-
-                    <p
-                      style={{
-                        margin: '5px 0 0',
-                        color: '#5f6b7a',
-                        fontSize: '14px',
-                      }}
-                    >
-                      {completedLessons} of {totalLessons} lessons
-                      completed
-                    </p>
-                  </div>
-
-                  <strong
-                    style={{
-                      fontSize: '22px',
-                      color: '#315ee7',
-                    }}
-                  >
-                    {progressPercent}%
-                  </strong>
-                </div>
-
-                <div
-                  style={{
-                    height: '10px',
-                    background: '#e8edf3',
-                    borderRadius: '999px',
-                    overflow: 'hidden',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${progressPercent}%`,
-                      height: '100%',
-                      background:
-                        'linear-gradient(90deg, #315ee7, #0e8f78)',
-                      borderRadius: '999px',
-                    }}
-                  />
-                </div>
-
-                {progressPercent === 100 && (
-                  <p
-                    style={{
-                      margin: '12px 0 0',
-                      color: '#087b67',
-                      fontWeight: '700',
-                    }}
-                  >
-                    ✓ Course completed
-                  </p>
-                )}
-              </section>
-            )}
-
-            <section
+            <h1
               style={{
-                background: '#ffffff',
-                border: '1px solid #dfe6ee',
-                borderRadius: '16px',
-                padding: '25px',
+                margin: '0 0 20px',
+                fontSize:
+                  'clamp(38px,5vw,60px)',
+                lineHeight: 1.06,
+                letterSpacing: '-2.5px',
               }}
             >
-              <div style={{ marginBottom: '20px' }}>
+              {course.title}
+            </h1>
+
+            <p
+              style={{
+                maxWidth: '760px',
+                margin: '0 0 28px',
+                color: '#cbd7eb',
+                fontSize: '17px',
+                lineHeight: 1.7,
+              }}
+            >
+              {course.short_description ||
+                course.description ||
+                'A structured professional technology program designed to build practical skills.'}
+            </p>
+
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '20px',
+                color: '#dbe5f5',
+              }}
+            >
+              <HeroStat
+                value={String(
+                  course.duration_months
+                )}
+                label="Months"
+              />
+
+              <HeroStat
+                value={String(
+                  totalLessons
+                )}
+                label="Lessons"
+              />
+
+              <HeroStat
+                value={String(
+                  modules.length
+                )}
+                label="Modules"
+              />
+
+              {course.certificate_enabled && (
+                <HeroStat
+                  value="✓"
+                  label="Certificate"
+                />
+              )}
+            </div>
+          </div>
+
+          {/* PRICE CARD */}
+
+          <div
+            style={{
+              padding: '26px',
+              borderRadius: '20px',
+              background: '#fff',
+              color: '#111827',
+              boxShadow:
+                '0 25px 70px rgba(0,0,0,.25)',
+            }}
+          >
+            {enrollment ? (
+              <>
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    padding: '7px 10px',
+                    borderRadius: '8px',
+                    background: '#e9f9f2',
+                    color: '#087443',
+                    fontSize: '11px',
+                    fontWeight: 900,
+                    marginBottom: '14px',
+                  }}
+                >
+                  YOU ARE ENROLLED
+                </div>
+
                 <h2
                   style={{
-                    margin: '0 0 7px',
+                    margin: '0 0 8px',
                     fontSize: '25px',
                   }}
                 >
-                  Course Curriculum
+                  Continue your learning
                 </h2>
 
                 <p
                   style={{
-                    margin: 0,
-                    color: '#5f6b7a',
-                    fontSize: '14px',
+                    margin: '0 0 20px',
+                    color: '#667085',
+                    fontSize: '13px',
+                    lineHeight: 1.6,
                   }}
                 >
-                  {modules?.length || 0} modules · {totalLessons} lessons
+                  You have completed{' '}
+                  <strong>
+                    {completedLessons}
+                  </strong>{' '}
+                  of{' '}
+                  <strong>
+                    {totalLessons}
+                  </strong>{' '}
+                  lessons.
                 </p>
-              </div>
 
-              {modulesError && (
                 <div
                   style={{
-                    padding: '15px',
-                    background: '#fff4f2',
-                    border: '1px solid #f3c2ba',
-                    borderRadius: '10px',
-                    color: '#b42318',
-                    marginBottom: '15px',
+                    height: '9px',
+                    borderRadius: '999px',
+                    background: '#e5e7eb',
+                    overflow: 'hidden',
+                    marginBottom: '8px',
                   }}
                 >
-                  Could not load the curriculum.
-                </div>
-              )}
-
-              {!modules || modules.length === 0 ? (
-                <div
-                  style={{
-                    padding: '20px',
-                    background: '#f7f9fc',
-                    borderRadius: '10px',
-                    color: '#5f6b7a',
-                  }}
-                >
-                  The curriculum for this course has not been added yet.
-                </div>
-              ) : (
-                <div
-                  style={{
-                    display: 'grid',
-                    gap: '12px',
-                  }}
-                >
-                  {modules.map((module, moduleIndex) => {
-                    const moduleLessons =
-                      lessonsByModule.get(module.id) || []
-
-                    return (
-                      <details
-                        key={module.id}
-                        open={moduleIndex === 0}
-                        style={{
-                          border: '1px solid #dfe6ee',
-                          borderRadius: '12px',
-                          overflow: 'hidden',
-                          background: '#ffffff',
-                        }}
-                      >
-                        <summary
-                          style={{
-                            padding: '17px',
-                            cursor: 'pointer',
-                            fontWeight: '700',
-                            fontSize: '15px',
-                            background: '#f7f9fc',
-                          }}
-                        >
-                          Module {moduleIndex + 1}: {module.title}
-                        </summary>
-
-                        <div style={{ padding: '17px' }}>
-                          {module.description && (
-                            <p
-                              style={{
-                                margin: '0 0 15px',
-                                color: '#5f6b7a',
-                                fontSize: '14px',
-                                lineHeight: '1.6',
-                              }}
-                            >
-                              {module.description}
-                            </p>
-                          )}
-
-                          {moduleLessons.length === 0 ? (
-                            <p
-                              style={{
-                                color: '#5f6b7a',
-                                fontSize: '14px',
-                              }}
-                            >
-                              Lessons will be added soon.
-                            </p>
-                          ) : (
-                            <div
-                              style={{
-                                display: 'grid',
-                                gap: '8px',
-                              }}
-                            >
-                              {moduleLessons.map(
-                                (lesson, lessonIndex) => {
-                                  const completed =
-                                    completedLessonIds.has(
-                                      lesson.id
-                                    )
-
-                                  return (
-                                    <div
-                                      key={lesson.id}
-                                      style={{
-                                        display: 'flex',
-                                        justifyContent:
-                                          'space-between',
-                                        alignItems: 'center',
-                                        gap: '15px',
-                                        padding: '12px 14px',
-                                        border:
-                                          '1px solid #e5e9ef',
-                                        borderRadius: '9px',
-                                      }}
-                                    >
-                                      <div>
-                                        <div
-                                          style={{
-                                            fontSize: '14px',
-                                            fontWeight: '600',
-                                          }}
-                                        >
-                                          {moduleIndex + 1}.
-                                          {lessonIndex + 1}{' '}
-                                          {lesson.title}
-                                        </div>
-
-                                        <div
-                                          style={{
-                                            marginTop: '4px',
-                                            color: '#7a8594',
-                                            fontSize: '12px',
-                                          }}
-                                        >
-                                          {lesson.duration_minutes
-                                            ? `${lesson.duration_minutes} minutes`
-                                            : 'Lesson'}
-                                          {lesson.is_preview
-                                            ? ' · Preview'
-                                            : ''}
-                                        </div>
-                                      </div>
-
-                                      {completed ? (
-                                        <span
-                                          style={{
-                                            color: '#087b67',
-                                            fontSize: '12px',
-                                            fontWeight: '700',
-                                            whiteSpace: 'nowrap',
-                                          }}
-                                        >
-                                          ✓ Completed
-                                        </span>
-                                      ) : (
-                                        <Link
-                                          href={`/courses/${course.slug}/learn/${lesson.id}`}
-                                          style={{
-                                            color: '#315ee7',
-                                            fontSize: '12px',
-                                            fontWeight: '700',
-                                            textDecoration: 'none',
-                                            whiteSpace: 'nowrap',
-                                          }}
-                                        >
-                                          Start Lesson →
-                                        </Link>
-                                      )}
-                                    </div>
-                                  )
-                                }
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </details>
-                    )
-                  })}
-                </div>
-              )}
-            </section>
-          </div>
-
-          <aside
-            style={{
-              position: 'sticky',
-              top: '20px',
-            }}
-          >
-            <div
-              style={{
-                background: '#ffffff',
-                border: '1px solid #dfe6ee',
-                borderRadius: '16px',
-                padding: '25px',
-                boxShadow:
-                  '0 8px 30px rgba(16,24,40,0.06)',
-              }}
-            >
-              <p
-                style={{
-                  margin: '0 0 5px',
-                  color: '#5f6b7a',
-                  fontSize: '13px',
-                }}
-              >
-                Course fee
-              </p>
-
-              <div
-                style={{
-                  fontSize: '32px',
-                  fontWeight: '900',
-                  marginBottom: '20px',
-                }}
-              >
-                ₹{course.price_inr.toLocaleString('en-IN')}
-              </div>
-
-              {user && enrolled ? (
-                <div>
                   <div
                     style={{
-                      padding: '12px',
-                      background: '#e7f7f3',
-                      color: '#087b67',
-                      borderRadius: '9px',
-                      fontWeight: '700',
-                      fontSize: '14px',
-                      marginBottom: '12px',
-                    }}
-                  >
-                    ✓ Enrolled
-                  </div>
-
-                  <Link
-                    href="/dashboard"
-                    style={{
-                      display: 'block',
-                      textAlign: 'center',
-                      padding: '13px',
+                      width: `${progressPercentage}%`,
+                      height: '100%',
+                      borderRadius: '999px',
                       background: '#315ee7',
-                      color: '#ffffff',
-                      borderRadius: '9px',
-                      textDecoration: 'none',
-                      fontWeight: '700',
                     }}
+                  />
+                </div>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent:
+                      'space-between',
+                    color: '#667085',
+                    fontSize: '11px',
+                    marginBottom: '22px',
+                  }}
+                >
+                  <span>
+                    Course progress
+                  </span>
+
+                  <strong>
+                    {progressPercentage}%
+                  </strong>
+                </div>
+
+                {continueLesson ? (
+                  <a
+                    href={`/courses/${course.slug}/learn/${continueLesson.id}`}
+                    style={primaryButton}
+                  >
+                    Continue Learning →
+                  </a>
+                ) : (
+                  <a
+                    href="/dashboard"
+                    style={primaryButton}
                   >
                     Go to Dashboard
-                  </Link>
-                </div>
-              ) : user ? (
-                <div>
-                  <RazorpayCheckoutButton
-                    courseSlug={course.slug}
-                    courseTitle={course.title}
-                    priceInr={course.price_inr}
-                  />
+                  </a>
+                )}
+              </>
+            ) : (
+              <>
+                <span
+                  style={{
+                    display: 'block',
+                    color: '#667085',
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    textTransform:
+                      'uppercase',
+                    letterSpacing: '1px',
+                    marginBottom: '8px',
+                  }}
+                >
+                  One-time enrollment
+                </span>
 
-                  <p
-                    style={{
-                      margin: '12px 0 0',
-                      color: '#7a8594',
-                      fontSize: '11px',
-                      lineHeight: '1.5',
-                      textAlign: 'center',
-                    }}
-                  >
-                    Secure Razorpay checkout · Test Mode
-                  </p>
+                <div
+                  style={{
+                    fontSize: '34px',
+                    fontWeight: 900,
+                    letterSpacing: '-1px',
+                    marginBottom: '6px',
+                  }}
+                >
+                  ₹
+                  {Number(
+                    course.price_inr
+                  ).toLocaleString('en-IN')}
                 </div>
-              ) : (
-                <div>
-                  <Link
+
+                <p
+                  style={{
+                    margin: '0 0 22px',
+                    color: '#667085',
+                    fontSize: '12px',
+                  }}
+                >
+                  {course.lifetime_access
+                    ? 'Lifetime access included'
+                    : 'Access according to the course terms'}
+                </p>
+
+                {user ? (
+                  <RazorpayCheckoutButton
+                    courseSlug={
+                      course.slug
+                    }
+                    courseTitle={
+                      course.title
+                    }
+                    priceInr={Number(
+                      course.price_inr
+                    )}
+                  />
+                ) : (
+                  <a
                     href="/auth"
-                    style={{
-                      display: 'block',
-                      textAlign: 'center',
-                      padding: '13px',
-                      background: '#315ee7',
-                      color: '#ffffff',
-                      borderRadius: '9px',
-                      textDecoration: 'none',
-                      fontWeight: '700',
-                    }}
+                    style={primaryButton}
                   >
                     Sign In to Purchase
-                  </Link>
+                  </a>
+                )}
 
-                  <p
-                    style={{
-                      margin: '12px 0 0',
-                      color: '#7a8594',
-                      fontSize: '12px',
-                      textAlign: 'center',
-                    }}
-                  >
-                    Create an account or sign in to continue.
-                  </p>
-                </div>
-              )}
-
-              <div
-                style={{
-                  marginTop: '20px',
-                  paddingTop: '20px',
-                  borderTop: '1px solid #e5e9ef',
-                }}
-              >
                 <div
                   style={{
                     display: 'grid',
                     gap: '10px',
+                    marginTop: '20px',
+                    paddingTop: '18px',
+                    borderTop:
+                      '1px solid #e5e7eb',
                   }}
                 >
-                  <div
-                    style={{
-                      fontSize: '13px',
-                      color: '#4f5b6a',
-                    }}
-                  >
-                    ✓ {course.duration_months}-month structured program
-                  </div>
+                  <SmallBenefit
+                    text={`${course.duration_months}-month program`}
+                  />
 
-                  <div
-                    style={{
-                      fontSize: '13px',
-                      color: '#4f5b6a',
-                    }}
-                  >
-                    ✓{' '}
-                    {course.lifetime_access
-                      ? 'Lifetime access'
-                      : 'Course access'}
-                  </div>
-
-                  <div
-                    style={{
-                      fontSize: '13px',
-                      color: '#4f5b6a',
-                    }}
-                  >
-                    ✓ {totalLessons} lessons
-                  </div>
-
-                  {course.certificate_enabled && (
-                    <div
-                      style={{
-                        fontSize: '13px',
-                        color: '#4f5b6a',
-                      }}
-                    >
-                      ✓ Completion certificate
-                    </div>
+                  {course.lifetime_access && (
+                    <SmallBenefit
+                      text="Lifetime course access"
+                    />
                   )}
 
-                  <div
-                    style={{
-                      fontSize: '13px',
-                      color: '#4f5b6a',
-                    }}
-                  >
-                    ✓ Progress tracking
-                  </div>
+                  {course.certificate_enabled && (
+                    <SmallBenefit
+                      text="Certificate included"
+                    />
+                  )}
+
+                  <SmallBenefit
+                    text="Structured curriculum"
+                  />
                 </div>
-              </div>
-            </div>
-          </aside>
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      </section>
+
+      {/* OVERVIEW */}
+
+      <section
+        style={{
+          padding: '70px 24px',
+          background: '#fff',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: '1200px',
+            margin: '0 auto',
+            display: 'grid',
+            gridTemplateColumns:
+              'minmax(0,1.35fr) minmax(280px,.65fr)',
+            gap: '45px',
+          }}
+        >
+          <div>
+            <span style={kickerStyle}>
+              COURSE OVERVIEW
+            </span>
+
+            <h2 style={sectionTitle}>
+              Build skills through a
+              structured learning journey.
+            </h2>
+
+            <p
+              style={{
+                color: '#667085',
+                fontSize: '15px',
+                lineHeight: 1.8,
+                whiteSpace: 'pre-line',
+              }}
+            >
+              {course.description ||
+                course.short_description ||
+                'This professional program provides structured learning across the complete curriculum.'}
+            </p>
+          </div>
+
+          <div
+            style={{
+              padding: '24px',
+              border:
+                '1px solid #e5e7eb',
+              borderRadius: '17px',
+              background: '#f8fafc',
+            }}
+          >
+            <h3
+              style={{
+                margin: '0 0 18px',
+                fontSize: '17px',
+              }}
+            >
+              What you get
+            </h3>
+
+            <div
+              style={{
+                display: 'grid',
+                gap: '14px',
+              }}
+            >
+              <BenefitRow
+                title="Structured curriculum"
+                text={`${modules.length} modules`}
+              />
+
+              <BenefitRow
+                title="Complete lessons"
+                text={`${totalLessons} lessons`}
+              />
+
+              <BenefitRow
+                title="Program duration"
+                text={`${course.duration_months} months`}
+              />
+
+              <BenefitRow
+                title="Access"
+                text={
+                  course.lifetime_access
+                    ? 'Lifetime'
+                    : 'Limited'
+                }
+              />
+
+              <BenefitRow
+                title="Certificate"
+                text={
+                  course.certificate_enabled
+                    ? 'Included'
+                    : 'Not included'
+                }
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* CURRICULUM */}
+
+      <section
+        style={{
+          padding: '75px 24px 100px',
+          background: '#f5f7fb',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: '900px',
+            margin: '0 auto',
+          }}
+        >
+          <div
+            style={{
+              marginBottom: '35px',
+            }}
+          >
+            <span style={kickerStyle}>
+              CURRICULUM
+            </span>
+
+            <h2 style={sectionTitle}>
+              Everything included in
+              the program.
+            </h2>
+
+            <p
+              style={{
+                margin: '12px 0 0',
+                color: '#667085',
+                fontSize: '14px',
+              }}
+            >
+              {modules.length} modules ·{' '}
+              {totalLessons} lessons
+            </p>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gap: '13px',
+            }}
+          >
+            {modules.map(
+              (module, moduleIndex) => {
+                const lessons =
+                  module.lessons
+
+                const moduleCompleted =
+                  lessons.filter(
+                    (lesson) =>
+                      progressRows.some(
+                        (progress) =>
+                          progress.lesson_id ===
+                            lesson.id &&
+                          progress.completed
+                      )
+                  ).length
+
+                return (
+                  <details
+                    key={module.id}
+                    style={{
+                      background: '#fff',
+                      border:
+                        '1px solid #e2e6ee',
+                      borderRadius: '15px',
+                      overflow: 'hidden',
+                    }}
+                    open={
+                      moduleIndex === 0
+                    }
+                  >
+                    <summary
+                      style={{
+                        cursor: 'pointer',
+                        listStyle: 'none',
+                        padding:
+                          '20px 22px',
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent:
+                            'space-between',
+                          alignItems:
+                            'center',
+                          gap: '15px',
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems:
+                              'center',
+                            gap: '15px',
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: '38px',
+                              height: '38px',
+                              flexShrink: 0,
+                              display: 'grid',
+                              placeItems:
+                                'center',
+                              borderRadius:
+                                '10px',
+                              background:
+                                '#eef3ff',
+                              color:
+                                '#315ee7',
+                              fontSize:
+                                '12px',
+                              fontWeight:
+                                900,
+                            }}
+                          >
+                            {String(
+                              moduleIndex +
+                                1
+                            ).padStart(
+                              2,
+                              '0'
+                            )}
+                          </span>
+
+                          <div>
+                            <h3
+                              style={{
+                                margin:
+                                  '0 0 4px',
+                                fontSize:
+                                  '15px',
+                              }}
+                            >
+                              {
+                                module.title
+                              }
+                            </h3>
+
+                            <span
+                              style={{
+                                color:
+                                  '#98a2b3',
+                                fontSize:
+                                  '11px',
+                              }}
+                            >
+                              {
+                                lessons.length
+                              }{' '}
+                              lessons
+                              {enrollment &&
+                                ` · ${moduleCompleted}/${lessons.length} completed`}
+                            </span>
+                          </div>
+                        </div>
+
+                        <span
+                          style={{
+                            color:
+                              '#667085',
+                            fontSize:
+                              '20px',
+                          }}
+                        >
+                          +
+                        </span>
+                      </div>
+
+                      {module.description && (
+                        <p
+                          style={{
+                            margin:
+                              '14px 0 0 53px',
+                            color:
+                              '#667085',
+                            fontSize:
+                              '12px',
+                            lineHeight:
+                              1.6,
+                          }}
+                        >
+                          {
+                            module.description
+                          }
+                        </p>
+                      )}
+                    </summary>
+
+                    <div
+                      style={{
+                        borderTop:
+                          '1px solid #edf0f4',
+                      }}
+                    >
+                      {lessons.map(
+                        (
+                          lesson,
+                          lessonIndex
+                        ) => {
+                          const completed =
+                            progressRows.some(
+                              (
+                                progress
+                              ) =>
+                                progress.lesson_id ===
+                                  lesson.id &&
+                                progress.completed
+                            )
+
+                          const canOpen =
+                            Boolean(
+                              enrollment ||
+                                lesson.is_preview
+                            )
+
+                          return (
+                            <div
+                              key={
+                                lesson.id
+                              }
+                              style={{
+                                display:
+                                  'flex',
+                                alignItems:
+                                  'center',
+                                justifyContent:
+                                  'space-between',
+                                gap: '15px',
+                                padding:
+                                  '14px 22px 14px 75px',
+                                borderBottom:
+                                  lessonIndex ===
+                                  lessons.length -
+                                    1
+                                    ? 'none'
+                                    : '1px solid #f0f2f5',
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display:
+                                    'flex',
+                                  alignItems:
+                                    'center',
+                                  gap: '12px',
+                                  minWidth:
+                                    0,
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    width:
+                                      '25px',
+                                    height:
+                                      '25px',
+                                    flexShrink:
+                                      0,
+                                    display:
+                                      'grid',
+                                    placeItems:
+                                      'center',
+                                    borderRadius:
+                                      '50%',
+                                    background:
+                                      completed
+                                        ? '#e9f9f2'
+                                        : '#f2f4f7',
+                                    color:
+                                      completed
+                                        ? '#087443'
+                                        : '#667085',
+                                    fontSize:
+                                      '10px',
+                                    fontWeight:
+                                      800,
+                                  }}
+                                >
+                                  {completed
+                                    ? '✓'
+                                    : lessonIndex +
+                                      1}
+                                </span>
+
+                                <div
+                                  style={{
+                                    minWidth:
+                                      0,
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      display:
+                                        'flex',
+                                      alignItems:
+                                        'center',
+                                      gap: '7px',
+                                      flexWrap:
+                                        'wrap',
+                                    }}
+                                  >
+                                    <span
+                                      style={{
+                                        fontSize:
+                                          '13px',
+                                        fontWeight:
+                                          700,
+                                        color:
+                                          '#344054',
+                                      }}
+                                    >
+                                      {
+                                        lesson.title
+                                      }
+                                    </span>
+
+                                    {lesson.is_preview && (
+                                      <span
+                                        style={{
+                                          padding:
+                                            '3px 6px',
+                                          borderRadius:
+                                            '5px',
+                                          background:
+                                            '#eef3ff',
+                                          color:
+                                            '#315ee7',
+                                          fontSize:
+                                            '9px',
+                                          fontWeight:
+                                            900,
+                                        }}
+                                      >
+                                        PREVIEW
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {lesson.duration_minutes && (
+                                    <span
+                                      style={{
+                                        display:
+                                          'block',
+                                        marginTop:
+                                          '3px',
+                                        color:
+                                          '#98a2b3',
+                                        fontSize:
+                                          '10px',
+                                      }}
+                                    >
+                                      {
+                                        lesson.duration_minutes
+                                      }{' '}
+                                      minutes
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {canOpen ? (
+                                <a
+                                  href={`/courses/${course.slug}/learn/${lesson.id}`}
+                                  style={{
+                                    flexShrink:
+                                      0,
+                                    padding:
+                                      '8px 11px',
+                                    border:
+                                      '1px solid #d9dee8',
+                                    borderRadius:
+                                      '8px',
+                                    color:
+                                      '#344054',
+                                    textDecoration:
+                                      'none',
+                                    fontSize:
+                                      '11px',
+                                    fontWeight:
+                                      800,
+                                  }}
+                                >
+                                  {completed
+                                    ? 'Review'
+                                    : 'Open'}
+                                </a>
+                              ) : (
+                                <span
+                                  style={{
+                                    flexShrink:
+                                      0,
+                                    color:
+                                      '#98a2b3',
+                                    fontSize:
+                                      '18px',
+                                  }}
+                                >
+                                  🔒
+                                </span>
+                              )}
+                            </div>
+                          )
+                        }
+                      )}
+                    </div>
+                  </details>
+                )
+              }
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* FINAL CTA */}
+
+      <section
+        style={{
+          padding: '0 24px 80px',
+          background: '#f5f7fb',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: '1200px',
+            margin: '0 auto',
+            padding: '45px',
+            borderRadius: '22px',
+            background:
+              'linear-gradient(135deg,#10234d,#315ee7)',
+            color: '#fff',
+            textAlign: 'center',
+          }}
+        >
+          <h2
+            style={{
+              margin: '0 0 10px',
+              fontSize: '32px',
+            }}
+          >
+            Ready to begin?
+          </h2>
+
+          <p
+            style={{
+              margin: '0 auto 22px',
+              maxWidth: '600px',
+              color: '#cbd5e1',
+              fontSize: '14px',
+              lineHeight: 1.7,
+            }}
+          >
+            Start your structured
+            learning journey with
+            TechNova Academy.
+          </p>
+
+          {enrollment &&
+          continueLesson ? (
+            <a
+              href={`/courses/${course.slug}/learn/${continueLesson.id}`}
+              style={ctaButton}
+            >
+              Continue Learning →
+            </a>
+          ) : user ? (
+            <RazorpayCheckoutButton
+              courseSlug={course.slug}
+              courseTitle={course.title}
+              priceInr={Number(
+                course.price_inr
+              )}
+            />
+          ) : (
+            <a
+              href="/auth"
+              style={ctaButton}
+            >
+              Sign In to Enroll
+            </a>
+          )}
+        </div>
+      </section>
+
+      {/* FOOTER */}
+
+      <footer
+        style={{
+          background: '#0b1222',
+          color: '#fff',
+          padding: '45px 24px 25px',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: '1200px',
+            margin: '0 auto',
+            display: 'flex',
+            justifyContent:
+              'space-between',
+            gap: '25px',
+            flexWrap: 'wrap',
+          }}
+        >
+          <div>
+            <strong
+              style={{
+                fontSize: '17px',
+              }}
+            >
+              TechNova Academy
+            </strong>
+
+            <p
+              style={{
+                margin: '8px 0 0',
+                color: '#94a3b8',
+                fontSize: '12px',
+              }}
+            >
+              Professional technology
+              education.
+            </p>
+          </div>
+
+          <div
+            style={{
+              display: 'flex',
+              gap: '20px',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+            }}
+          >
+            <a
+              href="/courses"
+              style={footerLink}
+            >
+              Courses
+            </a>
+
+            <a
+              href="/dashboard"
+              style={footerLink}
+            >
+              Dashboard
+            </a>
+
+            <a
+              href="/auth"
+              style={footerLink}
+            >
+              Account
+            </a>
+          </div>
+        </div>
+
+        <div
+          style={{
+            maxWidth: '1200px',
+            margin: '30px auto 0',
+            paddingTop: '20px',
+            borderTop:
+              '1px solid #1e293b',
+            color: '#64748b',
+            fontSize: '11px',
+          }}
+        >
+          © 2026 TechNova Academy.
+          All rights reserved.
+        </div>
+      </footer>
     </main>
   )
+}
+
+// --------------------------------------------------
+// SMALL COMPONENTS
+// --------------------------------------------------
+
+function HeroStat({
+  value,
+  label,
+}: {
+  value: string
+  label: string
+}) {
+  return (
+    <div>
+      <strong style={heroStat}>
+        {value}
+      </strong>
+
+      <span style={heroStatLabel}>
+        {label}
+      </span>
+    </div>
+  )
+}
+
+function SmallBenefit({
+  text,
+}: {
+  text: string
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '9px',
+        color: '#475467',
+        fontSize: '11px',
+        fontWeight: 600,
+      }}
+    >
+      <span
+        style={{
+          width: '18px',
+          height: '18px',
+          display: 'grid',
+          placeItems: 'center',
+          borderRadius: '50%',
+          background: '#e9f9f2',
+          color: '#087443',
+          fontSize: '9px',
+          fontWeight: 900,
+        }}
+      >
+        ✓
+      </span>
+
+      {text}
+    </div>
+  )
+}
+
+function BenefitRow({
+  title,
+  text,
+}: {
+  title: string
+  text: string
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent:
+          'space-between',
+        gap: '15px',
+        paddingBottom: '12px',
+        borderBottom:
+          '1px solid #e5e7eb',
+      }}
+    >
+      <span
+        style={{
+          color: '#667085',
+          fontSize: '12px',
+        }}
+      >
+        {title}
+      </span>
+
+      <strong
+        style={{
+          color: '#344054',
+          fontSize: '12px',
+          textAlign: 'right',
+        }}
+      >
+        {text}
+      </strong>
+    </div>
+  )
+}
+
+// --------------------------------------------------
+// STYLES
+// --------------------------------------------------
+
+const heroBadge = {
+  padding: '7px 10px',
+  borderRadius: '7px',
+  background:
+    'rgba(255,255,255,.10)',
+  border:
+    '1px solid rgba(255,255,255,.15)',
+  color: '#dbe5f5',
+  fontSize: '10px',
+  fontWeight: 900,
+  textTransform: 'uppercase' as const,
+  letterSpacing: '.7px',
+}
+
+const heroStat = {
+  display: 'block',
+  color: '#fff',
+  fontSize: '22px',
+}
+
+const heroStatLabel = {
+  display: 'block',
+  marginTop: '3px',
+  color: '#9fb0cc',
+  fontSize: '10px',
+}
+
+const kickerStyle = {
+  color: '#315ee7',
+  fontSize: '11px',
+  fontWeight: 900,
+  letterSpacing: '1.5px',
+}
+
+const sectionTitle = {
+  margin: '9px 0 20px',
+  fontSize: 'clamp(30px,4vw,43px)',
+  lineHeight: 1.12,
+  letterSpacing: '-1.5px',
+}
+
+const primaryButton = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: '100%',
+  padding: '14px',
+  borderRadius: '10px',
+  background: '#315ee7',
+  color: '#fff',
+  textDecoration: 'none',
+  fontWeight: 800,
+  fontSize: '14px',
+  boxSizing: 'border-box' as const,
+}
+
+const ctaButton = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: '13px 20px',
+  borderRadius: '9px',
+  background: '#fff',
+  color: '#17336f',
+  textDecoration: 'none',
+  fontWeight: 800,
+  fontSize: '13px',
+}
+
+const footerLink = {
+  color: '#94a3b8',
+  textDecoration: 'none',
+  fontSize: '12px',
 }
