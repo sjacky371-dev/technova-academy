@@ -365,12 +365,21 @@ const hasAccess =
   |--------------------------------------------------------------------------
   */
 const previewYouTubeUrl =
-    isPreviewLesson
-      ? previewVideos[course.slug] ?? null
-      : null
+  isPreviewLesson
+    ? previewVideos[slug] ?? null
+    : null
 
-  const previewEmbedUrl =
-    getYouTubeEmbedUrl(previewYouTubeUrl)
+const previewEmbedUrl =
+  getYouTubeEmbedUrl(previewYouTubeUrl)
+
+console.log('===== TECHNOVA VIDEO DEBUG =====')
+console.log('URL slug:', slug)
+console.log('Course slug:', course.slug)
+console.log('Course title:', course.title)
+console.log('Is preview:', isPreviewLesson)
+console.log('Preview YouTube URL:', previewYouTubeUrl)
+console.log('Preview Embed URL:', previewEmbedUrl)
+console.log('================================')
 
   /*
   |--------------------------------------------------------------------------

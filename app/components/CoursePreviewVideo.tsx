@@ -1,42 +1,40 @@
+'use client'
+
 type CoursePreviewVideoProps = {
   title: string
   description?: string
-  youtubeUrl: string
+  youtubeUrl?: string | null
 }
 
-function getYouTubeEmbedUrl(url: string) {
+function getYouTubeEmbedUrl(url: string): string | null {
   try {
-    const parsed = new URL(url)
+    const parsedUrl = new URL(url)
 
-    if (parsed.hostname === 'youtu.be') {
-      const videoId = parsed.pathname.replace('/', '').trim()
+    let videoId = ''
 
-      if (videoId) {
-        return `https://www.youtube.com/embed/${videoId}`
-      }
-    }
-
+    // Standard YouTube URL
     if (
-      parsed.hostname === 'www.youtube.com' ||
-      parsed.hostname === 'youtube.com' ||
-      parsed.hostname === 'm.youtube.com'
+      parsedUrl.hostname === 'www.youtube.com' ||
+      parsedUrl.hostname === 'youtube.com'
     ) {
-      const videoId = parsed.searchParams.get('v')
+      videoId = parsedUrl.searchParams.get('v') || ''
 
-      if (videoId) {
-        return `https://www.youtube.com/embed/${videoId}`
-      }
-
-      const parts = parsed.pathname.split('/')
-
-      const embedIndex = parts.indexOf('embed')
-
-      if (embedIndex !== -1 && parts[embedIndex + 1]) {
-        return `https://www.youtube.com/embed/${parts[embedIndex + 1]}`
+      // YouTube short URL path such as /embed/VIDEO_ID
+      if (!videoId && parsedUrl.pathname.startsWith('/embed/')) {
+        videoId = parsedUrl.pathname.replace('/embed/', '').split('/')[0]
       }
     }
 
-    return null
+    // youtu.be/VIDEO_ID
+    if (parsedUrl.hostname === 'youtu.be') {
+      videoId = parsedUrl.pathname.replace('/', '').split('/')[0]
+    }
+
+    if (!videoId) {
+      return null
+    }
+
+    return `https://www.youtube.com/embed/${videoId}`
   } catch {
     return null
   }
@@ -47,7 +45,9 @@ export default function CoursePreviewVideo({
   description,
   youtubeUrl,
 }: CoursePreviewVideoProps) {
-  const embedUrl = getYouTubeEmbedUrl(youtubeUrl)
+  const embedUrl = youtubeUrl
+    ? getYouTubeEmbedUrl(youtubeUrl)
+    : null
 
   if (!embedUrl) {
     return null
@@ -57,95 +57,95 @@ export default function CoursePreviewVideo({
     <section
       style={{
         padding: '70px 24px',
-        background: '#fff',
+        background: '#ffffff',
       }}
     >
       <div
         style={{
-          maxWidth: '1000px',
+          maxWidth: '1200px',
           margin: '0 auto',
         }}
       >
         <div
           style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            padding: '7px 10px',
-            borderRadius: '7px',
-            background: '#eef3ff',
-            color: '#315ee7',
-            fontSize: '10px',
-            fontWeight: 900,
-            letterSpacing: '1px',
-            marginBottom: '12px',
+            maxWidth: '820px',
+            margin: '0 auto',
+            textAlign: 'center',
           }}
         >
-          FREE PREVIEW
-        </div>
-
-        <h2
-          style={{
-            margin: '0 0 10px',
-            fontSize: 'clamp(28px,4vw,40px)',
-            lineHeight: 1.15,
-            letterSpacing: '-1px',
-            color: '#111827',
-          }}
-        >
-          {title}
-        </h2>
-
-        {description && (
-          <p
+          <span
             style={{
-              maxWidth: '720px',
-              margin: '0 0 28px',
-              color: '#667085',
-              fontSize: '14px',
-              lineHeight: 1.7,
+              display: 'inline-block',
+              marginBottom: '10px',
+              color: '#315ee7',
+              fontSize: '11px',
+              fontWeight: 900,
+              letterSpacing: '1.5px',
             }}
           >
-            {description}
-          </p>
-        )}
+            COURSE PREVIEW
+          </span>
+
+          <h2
+            style={{
+              margin: '0 0 12px',
+              color: '#111827',
+              fontSize: 'clamp(28px, 4vw, 42px)',
+              lineHeight: 1.15,
+              letterSpacing: '-1.2px',
+            }}
+          >
+            {title}
+          </h2>
+
+          {description && (
+            <p
+              style={{
+                maxWidth: '680px',
+                margin: '0 auto 28px',
+                color: '#667085',
+                fontSize: '14px',
+                lineHeight: 1.7,
+              }}
+            >
+              {description}
+            </p>
+          )}
+        </div>
 
         <div
           style={{
-            position: 'relative',
-            width: '100%',
-            aspectRatio: '16 / 9',
+            maxWidth: '900px',
+            margin: '0 auto',
             overflow: 'hidden',
             borderRadius: '18px',
-            background: '#0b1222',
-            boxShadow: '0 18px 50px rgba(16,24,40,.14)',
+            background: '#000',
+            boxShadow: '0 20px 60px rgba(0,0,0,.15)',
+            border: '1px solid #e5e7eb',
           }}
         >
-          <iframe
-            src={embedUrl}
-            title={title}
-            loading="lazy"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            allowFullScreen
+          <div
             style={{
-              position: 'absolute',
-              inset: 0,
+              position: 'relative',
               width: '100%',
-              height: '100%',
-              border: 0,
+              paddingTop: '56.25%',
             }}
-          />
+          >
+            <iframe
+              src={embedUrl}
+              title={title}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                width: '100%',
+                height: '100%',
+                border: 0,
+              }}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+            />
+          </div>
         </div>
-
-        <p
-          style={{
-            margin: '12px 0 0',
-            color: '#98a2b3',
-            fontSize: '11px',
-          }}
-        >
-          Free preview video. Full course lessons and resources are available
-          after enrollment.
-        </p>
       </div>
     </section>
   )

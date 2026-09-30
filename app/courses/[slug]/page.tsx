@@ -1,10 +1,40 @@
-import type { Metadata } from 'next'
+﻿import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import RazorpayCheckoutButton from '../../components/RazorpayCheckoutButton'
 import CoursePreviewVideo from '../../components/CoursePreviewVideo'
 const siteUrl = 'https://technova-academy-ten.vercel.app'
+const coursePreviewVideos: Record<string, string> = {
+  'artificial-intelligence-machine-learning':
+    'https://www.youtube.com/watch?v=hDKCxebp88A',
 
+  'advanced-machine-learning-deep-learning':
+    'https://www.youtube.com/watch?v=VyWAvY2CF9c',
+
+  'data-science-artificial-intelligence':
+    'https://www.youtube.com/watch?v=YyR235CLCZo',
+
+  'generative-ai-large-language-models':
+    'https://www.youtube.com/watch?v=vwncYfhxbR0',
+
+  'aerospace-engineering-flight-dynamics':
+    'https://www.youtube.com/watch?v=v5fQXpZ0yr0',
+
+  'robotics-autonomous-systems':
+    'https://www.youtube.com/watch?v=DaWMvEY3Qgc',
+
+  'computational-fluid-dynamics':
+    'https://www.youtube.com/watch?v=dyunHLRd9Q4',
+
+  'aircraft-design-aerodynamics':
+    'https://www.youtube.com/watch?v=KjRdkv2MsGU',
+
+  'spacecraft-engineering-orbital-mechanics':
+    'https://www.youtube.com/watch?v=V7IrDWYb-mM',
+
+  'control-systems-autonomous-vehicles':
+    'https://www.youtube.com/watch?v=RcuGxWc0HyQ',
+}
 type CoursePageProps = {
   params: Promise<{
     slug: string
@@ -573,7 +603,7 @@ export default async function CoursePage({
                 {course.certificate_enabled && (
                   <div>
                     <strong style={heroStat}>
-                      ✓
+                      âœ“
                     </strong>
 
                     <span style={heroStatLabel}>
@@ -696,7 +726,7 @@ export default async function CoursePage({
                         boxSizing: 'border-box',
                       }}
                     >
-                      Continue Learning →
+                      Continue Learning â†’
                     </a>
                   ) : (
                     <a
@@ -744,7 +774,7 @@ export default async function CoursePage({
                       marginBottom: '6px',
                     }}
                   >
-                    ₹
+                    â‚¹
                     {Number(
                       course.price_inr
                     ).toLocaleString('en-IN')}
@@ -923,7 +953,7 @@ export default async function CoursePage({
         <CoursePreviewVideo
           title={`Preview: ${course.title}`}
           description="Watch a free preview to get a feel for the topics, teaching style and technical learning covered in this program."
-          youtubeUrl="https://www.youtube.com/watch?v=VyWAvY2CF9c"
+          youtubeUrl={coursePreviewVideos[course.slug] ?? null}
         />
 
         {/* =====================================
@@ -962,7 +992,7 @@ export default async function CoursePage({
                   fontSize: '14px',
                 }}
               >
-                {moduleList.length} modules · {totalLessons} lessons
+                {moduleList.length} modules Â· {totalLessons} lessons
               </p>
             </div>
 
@@ -1059,7 +1089,7 @@ export default async function CoursePage({
                             >
                               {lessons.length} lessons
                               {enrollment &&
-                                ` · ${moduleCompleted}/${lessons.length} completed`}
+                                ` Â· ${moduleCompleted}/${lessons.length} completed`}
                             </span>
                           </div>
                         </div>
@@ -1160,7 +1190,7 @@ export default async function CoursePage({
                                   }}
                                 >
                                   {completed
-                                    ? '✓'
+                                    ? 'âœ“'
                                     : lessonIndex + 1}
                                 </span>
 
@@ -1272,7 +1302,7 @@ export default async function CoursePage({
                                       '18px',
                                   }}
                                 >
-                                  🔒
+                                  ðŸ”’
                                 </span>
                               )}
                             </div>
@@ -1337,7 +1367,7 @@ export default async function CoursePage({
                 href={`/courses/${course.slug}/learn/${continueLesson.id}`}
                 style={ctaButton}
               >
-                Continue Learning →
+                Continue Learning â†’
               </a>
             ) : user ? (
               <RazorpayCheckoutButton
@@ -1424,6 +1454,18 @@ export default async function CoursePage({
               >
                 Account
               </a>
+                <span style={{ color: '#94a3b8' }}>
+                  Support:{' '}
+                  <a
+                    href="mailto:technovaacademy.support@gmail.com"
+                    style={{
+                      color: '#cbd5e1',
+                      textDecoration: 'none',
+                    }}
+                  >
+                    technovaacademy.support@gmail.com
+                  </a>
+                </span>
             </div>
           </div>
 
@@ -1437,7 +1479,7 @@ export default async function CoursePage({
               fontSize: '11px',
             }}
           >
-            © 2026 TechNova Academy. All rights reserved.
+            Â© 2026 TechNova Academy. All rights reserved.
           </div>
         </footer>
       </main>
@@ -1478,7 +1520,7 @@ function SmallBenefit({
           fontWeight: 900,
         }}
       >
-        ✓
+        âœ“
       </span>
 
       {text}
@@ -1587,3 +1629,4 @@ const footerLink = {
   textDecoration: 'none',
   fontSize: '12px',
 }
+
