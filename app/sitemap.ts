@@ -1,62 +1,77 @@
-import type { MetadataRoute } from "next"
+import type { MetadataRoute } from "next";
+import { createAdminClient } from "@/lib/supabase/admin";
 
-const baseUrl = "https://technova-academy-ten.vercel.app"
+const siteUrl = "https://technova-academy-ten.vercel.app";
 
-export default function sitemap(): MetadataRoute.Sitemap {
-  return [
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const supabase = createAdminClient();
+
+  const { data: courses } = await supabase
+    .from("courses")
+    .select("slug, updated_at")
+    .eq("published", true);
+
+  const staticPages: MetadataRoute.Sitemap = [
     {
-      url: baseUrl,
+      url: siteUrl,
       lastModified: new Date(),
       changeFrequency: "weekly",
       priority: 1,
     },
     {
-      url: `${baseUrl}/auth`,
+      url: `${siteUrl}/auth`,
       lastModified: new Date(),
       changeFrequency: "monthly",
       priority: 0.7,
     },
     {
-      url: `${baseUrl}/dashboard`,
-      lastModified: new Date(),
-      changeFrequency: "monthly",
-      priority: 0.5,
-    },
-    {
-      url: `${baseUrl}/profile`,
+      url: `${siteUrl}/profile`,
       lastModified: new Date(),
       changeFrequency: "monthly",
       priority: 0.4,
     },
     {
-      url: `${baseUrl}/certificates`,
+      url: `${siteUrl}/certificates`,
       lastModified: new Date(),
       changeFrequency: "monthly",
       priority: 0.4,
     },
     {
-      url: `${baseUrl}/privacy`,
+      url: `${siteUrl}/privacy`,
       lastModified: new Date(),
       changeFrequency: "yearly",
       priority: 0.3,
     },
     {
-      url: `${baseUrl}/terms`,
+      url: `${siteUrl}/terms`,
       lastModified: new Date(),
       changeFrequency: "yearly",
       priority: 0.3,
     },
     {
-      url: `${baseUrl}/refund`,
+      url: `${siteUrl}/refund`,
       lastModified: new Date(),
       changeFrequency: "yearly",
       priority: 0.3,
     },
     {
-      url: `${baseUrl}/disclaimer`,
+      url: `${siteUrl}/disclaimer`,
       lastModified: new Date(),
       changeFrequency: "yearly",
       priority: 0.3,
     },
-  ]
+  ];
+
+  const coursePages: MetadataRoute.Sitemap = (courses || []).map(
+    (course) => ({
+      url: `${siteUrl}/courses/${course.slug}`,
+      lastModified: course.updated_at
+        ? new Date(course.updated_at)
+        : new Date(),
+      changeFrequency: "weekly",
+      priority: 0.9,
+    })
+  );
+
+  return [...staticPages, ...coursePages];
 }
