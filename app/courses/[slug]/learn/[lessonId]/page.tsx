@@ -326,11 +326,9 @@ export default async function LessonPage({
   const currentLessonNumber =
     currentIndex + 1
 
-  const categoryName =
-    typeof course.category === 'object' &&
-    course.category !== null
-      ? course.category.name
-      : 'Professional Program'
+ const categoryName = Array.isArray(course.category)
+  ? (course.category[0] as any)?.name || 'Professional Program'
+  : 'Professional Program'
 
   return (
     <main style={styles.page}>
@@ -704,9 +702,7 @@ export default async function LessonPage({
                       enrollmentId={
                         enrollment.id
                       }
-                      completed={
-                        isCompleted
-                      }
+                      initialCompleted={isCompleted}
                     />
                   </div>
                 )}

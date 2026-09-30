@@ -161,7 +161,7 @@ export default async function AdminPage() {
     },
   ]
 
-  const recentOrders = (recentOrdersResult.data || []) as OrderRow[]
+  const recentOrders = (recentOrdersResult.data || []) as unknown as OrderRow[]
 
   return (
     <main style={styles.page}>
@@ -451,7 +451,7 @@ export default async function AdminPage() {
   )
 }
 
-const styles: Record<string, React.CSSProperties> = {
+const styles: Record<string, any> = {
   page: {
     minHeight: '100vh',
     background: '#f5f7fb',

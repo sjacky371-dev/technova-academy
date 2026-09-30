@@ -54,7 +54,7 @@ export default function CertificatesPage() {
         .order('issued_at', { ascending: false })
 
       if (!error && data) {
-        setCertificates(data as Certificate[])
+        setCertificates((data || []).map((row: any) => ({ id: row.id, certificate_id: row.certificate_id, issued_at: row.issued_at, completion_date: row.completion_date, verification_url: row.verification_url, enrollment: Array.isArray(row.enrollment) ? (row.enrollment[0] ? { course: Array.isArray(row.enrollment[0].course) ? (row.enrollment[0].course[0] || null) : (row.enrollment[0].course || null) } : null) : (row.enrollment || null) })))
       }
 
       setLoading(false)
