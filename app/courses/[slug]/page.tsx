@@ -603,7 +603,7 @@ export default async function CoursePage({
                 {course.certificate_enabled && (
                   <div>
                     <strong style={heroStat}>
-                      âœ“
+                      {'\u20B9'}
                     </strong>
 
                     <span style={heroStatLabel}>
@@ -774,7 +774,7 @@ export default async function CoursePage({
                       marginBottom: '6px',
                     }}
                   >
-                    â‚¹
+                    {'\u20B9'}
                     {Number(
                       course.price_inr
                     ).toLocaleString('en-IN')}
@@ -1479,7 +1479,7 @@ export default async function CoursePage({
               fontSize: '11px',
             }}
           >
-            Â© 2026 TechNova Academy. All rights reserved.
+            {'\u20B9'}
           </div>
         </footer>
       </main>
@@ -1520,7 +1520,7 @@ function SmallBenefit({
           fontWeight: 900,
         }}
       >
-        âœ“
+        {'\u20B9'}
       </span>
 
       {text}
@@ -1629,4 +1629,6 @@ const footerLink = {
   textDecoration: 'none',
   fontSize: '12px',
 }
+
+
 
