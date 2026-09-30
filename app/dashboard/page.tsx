@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '../../lib/supabase/server'
+import LogoutButton from '../components/LogoutButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -274,10 +275,13 @@ export default async function DashboardPage() {
               Certificates
             </Link>
           </nav>
+<div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+  <Link href="/profile" style={styles.accountButton}>
+    {firstName}
+  </Link>
 
-          <Link href="/profile" style={styles.accountButton}>
-            {firstName}
-          </Link>
+  <LogoutButton />
+</div>
         </header>
 
         <section style={styles.hero}>
