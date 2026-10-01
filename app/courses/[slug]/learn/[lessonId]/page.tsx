@@ -217,9 +217,9 @@ export default async function LessonPage({ params }: PageProps) {
 
     enrollment = enrollmentData
   }
-
-  const hasActiveEnrollment =
-    enrollment?.status === 'active'
+const hasActiveEnrollment =
+  enrollment?.status === 'active' ||
+  enrollment?.status === 'completed'
 
 /*
 |--------------------------------------------------------------------------
@@ -301,8 +301,7 @@ const hasAccess =
   */
 
   let completedLessonIds: string[] = []
-
-  if (user && hasActiveEnrollment) {
+if (user && (enrollment?.status === 'active' || enrollment?.status === 'completed')) {
     const { data: progressData, error: progressError } = await admin
       .from('lesson_progress')
       .select(`
@@ -876,7 +875,8 @@ const moduleLessonIsPreview =
 
 const accessible =
   moduleLessonIsPreview ||
-  hasActiveEnrollment
+  enrollment?.status === 'active' ||
+  enrollment?.status === 'completed'
 
                             return (
                               <Link
