@@ -197,26 +197,25 @@ export default async function LessonPage({ params }: PageProps) {
 
   let enrollment: any = null
 
-  if (user) {
-    const { data: enrollmentData, error: enrollmentError } = await admin
-      .from('enrollments')
-      .select(`
-        id,
-        user_id,
-        course_id,
-        status,
-        created_at
-      `)
-      .eq('user_id', user.id)
-      .eq('course_id', course.id)
-      .maybeSingle()
+if (user) {
+  const { data: enrollmentData, error: enrollmentError } = await admin
+    .from('enrollments')
+    .select(`
+      id,
+      user_id,
+      course_id,
+      status
+    `)
+    .eq('user_id', user.id)
+    .eq('course_id', course.id)
+    .maybeSingle()
 
-    if (enrollmentError) {
-      console.error('Enrollment error:', enrollmentError)
-    }
-
-    enrollment = enrollmentData
+  if (enrollmentError) {
+    console.error('Enrollment error:', enrollmentError)
   }
+
+  enrollment = enrollmentData
+}
 const hasActiveEnrollment =
   enrollment?.status === 'active' ||
   enrollment?.status === 'completed'
